@@ -227,7 +227,7 @@ class NPCHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(HOST, PORT, NPCHandler)
+    server = HTTPServer((HOST, PORT), NPCHandler)
     print(f"Esempio chiamata da PowerShell:")
     print(f'  Invoke-RestMethod -Uri "http://localhost:{PORT}/chat" \\')
     print(f'    -Method POST -ContentType "application/json" \\')
