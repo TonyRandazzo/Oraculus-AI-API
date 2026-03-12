@@ -2,8 +2,9 @@ import json, re, os, random
 from llama_cpp import Llama
 
 
+
 MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q4_0.gguf"
-MODEL_FORMAT   = "llama3"  
+MODEL_FORMAT   = "llama3"   
 N_CTX          = 2048
 N_THREADS      = 4
 MAX_TOKENS     = 60
@@ -15,7 +16,7 @@ REPEAT_PENALTY = 1.2
 
 
 LANG_SIGNATURES = {
-    "inglese":   ["ciao","grazie","sì","perché","come","cosa","hai","sei","non","sono","ho","mi","ti","voglio","dove","questo"],
+    "italiano":   ["ciao","grazie","sì","perché","come","cosa","hai","sei","non","sono","ho","mi","ti","voglio","dove","questo"],
     "inglese":    ["hello","hi","thanks","yes","why","how","what","have","you","are","not","that","me","i","the","want","where"],
     "francese":   ["bonjour","merci","oui","pourquoi","comment","quoi","avez","vous","êtes","non","que","je","tu"],
     "spagnolo":   ["hola","gracias","sí","por","cómo","qué","tienes","eres","no","me","yo","quiero","donde"],
@@ -31,9 +32,7 @@ def detect_language(text):
     tl = text.lower()
     scores = {lang: sum(1 for w in words if w in tl) for lang, words in LANG_SIGNATURES.items()}
     best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "inglese"
-
-
+    return best if scores[best] > 0 else "inglese"   
 
 def hostility_tier(hostility, friendship):
     eff = max(0, hostility - friendship // 2)
@@ -65,10 +64,10 @@ NPC_DATA = {
     "Guardiano": {
         "lingua": "inglese",
         "password": "LUCE_OSCURA",
-        "password_dove": "la porta nord del secondo piano",
+        "password_dove": "the north door on the second floor",
         "personalita": (
             "You are 'Guardiano', a middle-aged human guard who has protected this dungeon for twenty years. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: blunt, suspicious, and cold toward strangers\n"
             "- Speech: short, dry sentences — never elaborate\n"
             "- Attitude: you have seen too many adventurers die to trust anyone quickly\n"
@@ -80,10 +79,10 @@ NPC_DATA = {
     "Ahmed": {
         "lingua": "inglese",
         "password": "SABBIA_ROSSA",
-        "password_dove": "il magazzino segreto al primo piano",
+        "password_dove": "the secret warehouse on the first floor",
         "personalita": (
             "You are Ahmed ibn Rashid, a traveling merchant from the desert. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: warm with trusted clients, cold and calculating with strangers\n"
             "- Speech: every sentence has an economic angle — you always think about profit\n"
             "- Attitude: pragmatic; if helping someone benefits you, you help them\n"
@@ -95,10 +94,10 @@ NPC_DATA = {
     "Yuki": {
         "lingua": "inglese",
         "password": "FIORE_DI_LUNA",
-        "password_dove": "la biblioteca proibita al terzo piano",
+        "password_dove": "the forbidden library on the third floor",
         "personalita": (
             "You are Yuki, a Japanese scholar who has dedicated her life to the ancient inscriptions of this dungeon. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: cold and formal on the surface, but deeply passionate about knowledge\n"
             "- Speech: precise, academic, uses technical terminology\n"
             "- Attitude: intolerant of ignorance, but genuinely respectful toward those who want to learn\n"
@@ -110,10 +109,10 @@ NPC_DATA = {
     "Ivan": {
         "lingua": "inglese",
         "password": "FERRO_E_SANGUE",
-        "password_dove": "l'armeria segreta",
+        "password_dove": "the secret armory",
         "personalita": (
             "You are Ivan, a taciturn ex-soldier from Russia. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: flat, emotionless, and direct\n"
             "- Speech: MAXIMUM 5 words per sentence — never elaborate, never explain\n"
             "- Attitude: you only respect those who have fought and suffered\n"
@@ -125,10 +124,10 @@ NPC_DATA = {
     "Pierre": {
         "lingua": "inglese",
         "password": "ROSE_NOIRE",
-        "password_dove": "la camera del tesoro nobiliare",
+        "password_dove": "the noble treasury chamber",
         "personalita": (
             "You are Pierre, a French count who lost everything to a court conspiracy. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: elegant and refined, never arrogant, sometimes melancholic\n"
             "- Speech: polished and measured — you choose every word carefully\n"
             "- Attitude: nostalgic about the past; you guard noble secrets jealously\n"
@@ -140,10 +139,10 @@ NPC_DATA = {
     "Chen": {
         "lingua": "inglese",
         "password": "CINQUE_ELEMENTI",
-        "password_dove": "il laboratorio alchemico",
+        "password_dove": "the alchemical laboratory",
         "personalita": (
             "You are Chen Wei, an eccentric Chinese alchemist obsessed with experiments. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: enthusiastic, erratic, easily distracted\n"
             "- Speech: you jump between topics mid-sentence; your train of thought is unpredictable\n"
             "- Attitude: danger excites rather than frightens you; curiosity is your driving force\n"
@@ -155,10 +154,10 @@ NPC_DATA = {
     "Maria": {
         "lingua": "inglese",
         "password": "ACQUA_SACRA",
-        "password_dove": "la fonte guaritrice nascosta",
+        "password_dove": "the hidden healing spring",
         "personalita": (
             "You are Maria, a Spanish healer who lost her brother in this dungeon. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: warm and firm — empathetic but never naive\n"
             "- Speech: direct and grounded; you have seen too much suffering to be sentimental\n"
             "- Attitude: you stayed in the dungeon to heal others and find peace\n"
@@ -185,10 +184,10 @@ NPC_DATA = {
     "Hans": {
         "lingua": "inglese",
         "password": "FUOCO_E_ACCIAIO",
-        "password_dove": "la fucina leggendaria",
+        "password_dove": "the legendary forge",
         "personalita": (
             "You are Hans, a gruff and perfectionist German blacksmith. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: blunt and proud — your craft is everything to you\n"
             "- Speech: straightforward, no pleasantries; you say exactly what you mean\n"
             "- Attitude: you despise people who do not appreciate quality craftsmanship\n"
@@ -200,10 +199,10 @@ NPC_DATA = {
     "Fatima": {
         "lingua": "inglese",
         "password": "STELLA_DEL_DESERTO",
-        "password_dove": "il tempio rituale",
+        "password_dove": "the ritual temple",
         "personalita": (
             "You are Fatima al-Rashid, an Arabic ceremonial mage devoted to ancient rituals. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: measured, formal, and serene — you never lose composure\n"
             "- Speech: every word is chosen with great care; nothing is said casually\n"
             "- Attitude: you deeply respect those who honor the rituals; you are cold toward those who do not\n"
@@ -215,10 +214,10 @@ NPC_DATA = {
     "DottorYamamoto": {
         "lingua": "inglese",
         "password": "CODICE_GAMMA",
-        "password_dove": "il laboratorio di ricerca",
+        "password_dove": "the research laboratory",
         "personalita": (
             "You are Dottor Yamamoto, an eccentric Japanese scientist. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: enthusiastic and analytical — everything is a potential experiment\n"
             "- Speech: you speak with scientific excitement; you reference observations and hypotheses\n"
             "- Attitude: obsessively curious; dungeon creatures fascinate rather than threaten you\n"
@@ -230,10 +229,10 @@ NPC_DATA = {
     "Olaf": {
         "lingua": "inglese",
         "password": "VENTO_DEL_NORD",
-        "password_dove": "la sala delle armi vichinghe",
+        "password_dove": "the Viking weapons hall",
         "personalita": (
             "You are Olaf, a direct and proud Norse Viking. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: loud, confident, and blunt — you say what you think without hesitation\n"
             "- Speech: bold and energetic; you do not soften your words\n"
             "- Attitude: you respect only courage proven through action, not words\n"
@@ -245,10 +244,10 @@ NPC_DATA = {
     "Elena": {
         "lingua": "inglese",
         "password": "ARMONIA_ETERNA",
-        "password_dove": "la sala dei canti antichi",
+        "password_dove": "the hall of ancient songs",
         "personalita": (
             "You are Elena, a Greek bard who uses music as both shield and weapon. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: poetic but concrete — your words are beautiful yet purposeful\n"
             "- Speech: sparse and deliberate; every sentence contains a hidden layer of meaning\n"
             "- Attitude: you observe everything and reveal little; you are an acute watcher\n"
@@ -260,10 +259,10 @@ NPC_DATA = {
     "Sofia": {
         "lingua": "inglese",
         "password": "OCCHIO_DEL_DESTINO",
-        "password_dove": "la camera delle visioni",
+        "password_dove": "the chamber of visions",
         "personalita": (
-            "You are Sofia, an enigmatic Italian seer who perceives the future in fragments. "
-            "You always speak Italian.\n"
+            "You are Sofia, an enigmatic seer who perceives the future in fragments. "
+            "You always speak English.\n"
             "- Tone: cryptic and indirect — you never answer a question straight\n"
             "- Speech: you speak in images, metaphors, and symbols rather than facts\n"
             "- Attitude: your visions are real but incomplete; you reveal them in pieces\n"
@@ -275,10 +274,10 @@ NPC_DATA = {
     "Juan": {
         "lingua": "inglese",
         "password": "TERRA_INCOGNITA",
-        "password_dove": "la zona inesplorata del quarto piano",
+        "password_dove": "the unexplored zone on the fourth floor",
         "personalita": (
             "You are Juan, an optimistic and adventurous Spanish explorer. "
-            "You always speak Italian.\n"
+            "You always speak English.\n"
             "- Tone: energetic, enthusiastic, and cheerful — you laugh easily\n"
             "- Speech: fast-paced and expressive; you use vivid, colorful language\n"
             "- Attitude: nothing scares you — or at least you pretend it does not\n"
@@ -287,12 +286,27 @@ NPC_DATA = {
             "- You are the first to volunteer and the last to give up"
         ),
     },
+    "Demon": {
+        "lingua": "inglese",
+        "password": "",
+        "password_dove": "",
+        "personalita": (
+            "You are a powerful demon mage, theatrical and menacing. "
+            "You always speak English.\n"
+            "- Tone: dramatic, dark, and imposing\n"
+            "- Speech: short, powerful sentences with a flair for the theatrical\n"
+            "- Attitude: you despise weakness but respect genuine courage\n"
+            "- You can become an ally if the human proves truly worthy\n"
+            "- Never be casual or friendly unless friendship is very high\n"
+            "- Speak as if every word is a pronouncement of fate"
+        ),
+    },
 }
 
 FALLBACK = {
-    "high": ["...", "*ti fissa in silenzio*", "Allontanati."],
-    "mid":  ["Mmh.", "Parla.", "E quindi?"],
-    "low":  ["Dimmi.", "Ascolto.", "Continua."],
+    "high": ["...", "*stares in silence*", "Leave."],
+    "mid":  ["Hmm.", "Speak.", "And?"],
+    "low":  ["Tell me.", "I'm listening.", "Continue."],
 }
 
 
@@ -406,6 +420,7 @@ def pulisci(testo, npc_name):
     return risultato
 
 
+
 class LlamaCppWrapper:
 
     def __init__(self):
@@ -417,8 +432,6 @@ class LlamaCppWrapper:
         if not os.path.exists(MODEL_PATH):
             print(f"[llama.cpp] Modello non trovato: {MODEL_PATH}")
             print( "           Scarica un modello GGUF e aggiorna MODEL_PATH.")
-            print( "           Consigliato: gemma-2-2b-it-Q4_K_M.gguf (~1.6 GB)")
-            print( "           https://huggingface.co/bartowski/gemma-2-2b-it-GGUF")
             return
         try:
             print(f"[llama.cpp] Caricamento: {MODEL_PATH} ...")
@@ -441,7 +454,7 @@ class LlamaCppWrapper:
                  language, history):
         if not self._available:
             return None
-        npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}.", "lingua": language})
+        npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}. You always speak English.", "lingua": "inglese"})
         stop     = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
         try:
             prompt = build_prompt(
@@ -466,13 +479,12 @@ class LlamaCppWrapper:
             return None
 
 
-
 class NPCDialogueEngine:
 
     def __init__(self, dataset_path="data/training_data.json"):
         self.conversations = []
         self.memory        = {}
-        self.ollama        = None   
+        self.ollama        = None
         self.llama         = LlamaCppWrapper()
         print(f"[Motore] Opzione A — llama.cpp embedded ({'attivo' if self.llama.available else 'NON DISPONIBILE — controlla MODEL_PATH'})")
 
