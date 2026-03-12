@@ -11,73 +11,22 @@ from inference import NPCDialogueEngine
 
 
 
-HOST = "localhost"
-PORT = 5000
+if os.environ.get("RENDER"):
+    HOST = "0.0.0.0"
+    PORT = int(os.environ.get("PORT", 10000))
+    print("[ENV] Modalità Render rilevata")
+else:
+    HOST = "localhost"
+    PORT = 5000
+    print("[ENV] Modalità locale")
 
 
-def trova_ollama():
-    candidati = [
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"),
-        os.path.expandvars(r"%PROGRAMFILES%\Ollama\ollama.exe"),
-        "ollama",
-    ]
-    for percorso in candidati:
-        try:
-            subprocess.run([percorso, "--version"], capture_output=True, timeout=3)
-            return percorso
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            continue
-    return None
-
-def ollama_attivo():
-    try:
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-def avvia_ollama():
-    if ollama_attivo():
-        print("[Ollama] Gia in esecuzione.")
-        return True
-
-    percorso = trova_ollama()
-    if not percorso:
-        print("[Ollama] ERRORE: Ollama non trovato.")
-        print("         Scaricalo da https://ollama.com e installalo.")
-        print("         Il server parte comunque con retrieval+fallback.")
-        return False
-
-    print(f"[Ollama] Avvio automatico da: {percorso}")
-    try:
-        kwargs = {}
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        subprocess.Popen(
-            [percorso, "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            **kwargs
-        )
-        print("[Ollama] Attendo avvio", end="", flush=True)
-        for _ in range(15):
-            time.sleep(1)
-            print(".", end="", flush=True)
-            if ollama_attivo():
-                print(" pronto!")
-                return True
-        print("\n[Ollama] Timeout — non si e avviato in tempo.")
-        return False
-    except Exception as e:
-        print(f"\n[Ollama] Errore avvio: {e}")
-        return False
 
 
 print("=" * 60)
 print("  ORACULUS AI — Server REST per Godot")
 print("=" * 60)
 print()
-avvia_ollama()
 print()
 
 engine = NPCDialogueEngine(dataset_path="data/training_data.json")
