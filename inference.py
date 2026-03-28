@@ -552,10 +552,9 @@ class LlamaCppWrapper:
                     model="meta-llama/Llama-3.2-1B-Instruct",
                     token=token
                 )
-                test = self._hf_client.text_generation("Hello", max_new_tokens=5)
                 self._available = True
                 self._using_remote = True
-                print("[llama.cpp] Hugging Face attivo e funzionante")
+                print("[llama.cpp] Hugging Face attivo")
                 return
             except Exception as e:
                 print(f"[llama.cpp] Hugging Face fallito: {e}")
@@ -595,6 +594,7 @@ class LlamaCppWrapper:
         
         print("[llama.cpp] Nessun modello disponibile - Uso solo fallback")
 
+        
 class NPCDialogueEngine:
     def __init__(self):
         self.memory = {}
