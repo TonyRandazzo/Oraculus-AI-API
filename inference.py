@@ -1,5 +1,6 @@
 import json, re, os, random
 from llama_cpp import Llama
+from huggingface_hub import InferenceClient
 
 
 MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf"
@@ -530,36 +531,56 @@ def pulisci(testo, npc_name):
 class LlamaCppWrapper:
     def __init__(self):
         self._model = None
+        self._hf_client = None
         self._available = False
+        self._using_remote = False
         self._try_load()
-
+    
     def _try_load(self):
-        if not os.path.exists(MODEL_PATH):
-            print(f"[llama.cpp] Modello non trovato: {MODEL_PATH}")
-            return
+        if os.path.exists(MODEL_PATH):
+            try:
+                self._model = Llama(
+                    model_path=MODEL_PATH,
+                    n_ctx=N_CTX,
+                    n_threads=N_THREADS,
+                    n_gpu_layers=99,
+                    verbose=False
+                )
+                self._available = True
+                self._using_remote = False
+                print("[llama.cpp] Modello locale caricato")
+                return
+            except Exception as e:
+                print(f"[llama.cpp] Errore locale: {e}")
+        
         try:
-            print(f"[llama.cpp] Caricamento: {MODEL_PATH} ...")
-            self._model = Llama(
-                model_path=MODEL_PATH,
-                n_ctx=N_CTX,
-                n_threads=N_THREADS,
-                n_gpu_layers=99,
-                verbose=False,
+            self._hf_client = InferenceClient(
+                model="meta-llama/Llama-3.2-1B-Instruct",
+                token=os.environ.get("HF_TOKEN")
             )
             self._available = True
-            print(f"[llama.cpp] Pronto! Context: {N_CTX}, Max tokens: {MAX_TOKENS}")
+            self._using_remote = True
+            print("[llama.cpp] Modalità remota Hugging Face attiva")
         except Exception as e:
-            print(f"[llama.cpp] Errore: {e}")
-
+            print(f"[llama.cpp] Errore remoto: {e}")
+    
     @property
     def available(self):
         return self._available
-
+    
     def generate(self, player_input, npc_name, hostility, friendship, language, history):
         if not self._available:
             return None
+            
+        if not self._using_remote:
+            return self._generate_local(player_input, npc_name, hostility, friendship, language, history)
+        else:
+            return self._generate_remote(player_input, npc_name, hostility, friendship, language, history)
+    
+    def _generate_local(self, player_input, npc_name, hostility, friendship, language, history):
         npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
         stop = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
+        
         try:
             prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
             out = self._model(
@@ -574,22 +595,30 @@ class LlamaCppWrapper:
             )
             raw = out["choices"][0]["text"].strip()
             cleaned = pulisci(raw, npc_name)
-            
-            # Se la risposta è ancora un elenco numerico, fallback
-            if cleaned and re.match(r'^\d+\.', cleaned.strip()):
-                items = re.findall(r'\d+\.\s*([^\n]+)', cleaned)
-                if items:
-                    if len(items) == 1:
-                        cleaned = items[0]
-                    elif len(items) == 2:
-                        cleaned = f"{items[0]} and {items[1]}"
-                    else:
-                        cleaned = f"{items[0]}, {items[1]}, and {items[2]}"
-                    cleaned += "."
-            
             return cleaned if len(cleaned) > 2 else None
         except Exception as e:
-            print(f"[llama.cpp] Errore generazione: {e}")
+            print(f"[llama.cpp] Errore generazione locale: {e}")
+            return None
+    
+    def _generate_remote(self, player_input, npc_name, hostility, friendship, language, history):
+        try:
+            npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
+            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
+            
+            response = self._hf_client.text_generation(
+                prompt,
+                max_new_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                repetition_penalty=REPEAT_PENALTY,
+                do_sample=True
+            )
+            
+            cleaned = pulisci(response, npc_name)
+            return cleaned if len(cleaned) > 2 else None
+            
+        except Exception as e:
+            print(f"[llama.cpp] Errore generazione remota: {e}")
             return None
 
 class NPCDialogueEngine:
