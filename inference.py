@@ -553,16 +553,29 @@ class LlamaCppWrapper:
             except Exception as e:
                 print(f"[llama.cpp] Errore locale: {e}")
         
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            print("[llama.cpp] ERRORE: variabile HF_TOKEN non trovata. "
+                  "Controlla il nome esatto su Render (case-sensitive).")
+            return
+
         try:
             self._hf_client = InferenceClient(
                 model="meta-llama/Llama-3.2-1B-Instruct",
-                token=os.environ.get("HF_TOKEN")
+                token=hf_token,
+            )
+            # Validazione reale: un test minimo per verificare che il token funzioni
+            self._hf_client.chat_completion(
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=5,
             )
             self._available = True
             self._using_remote = True
-            print("[llama.cpp] Modalità remota Hugging Face attiva")
+            print("[llama.cpp] Modalità remota Hugging Face attiva e validata")
         except Exception as e:
-            print(f"[llama.cpp] Errore remoto: {e}")
+            print(f"[llama.cpp] ERRORE remoto ({type(e).__name__}): {e}")
+            print("[llama.cpp] Possibili cause: token non valido, modello non accessibile, "
+                  "piano HF insufficiente.")
     
     @property
     def available(self):
@@ -603,22 +616,51 @@ class LlamaCppWrapper:
     def _generate_remote(self, player_input, npc_name, hostility, friendship, language, history):
         try:
             npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
-            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
-            
-            response = self._hf_client.text_generation(
-                prompt,
-                max_new_tokens=MAX_TOKENS,
+
+            personality = npc_data.get("personalita", f"You are {npc_name}, an ancient spirit.")
+            tier = hostility_tier(hostility, friendship)
+            army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
+
+            if tier == "high":
+                mood = f"Attitude: HOSTILE (hostility {hostility}/100). Respond coldly."
+            elif tier == "mid":
+                mood = f"Attitude: GUARDED (hostility {hostility}/100). Watchful."
+            else:
+                mood = f"Attitude: OPEN (hostility {hostility}/100). Willing to help."
+
+            system_msg = (
+                f"{STORY_CONTEXT}\n\n"
+                f"CHARACTER:\n{personality}\n\n"
+                f"{mood}\n\n"
+                f"RULES:\n"
+                f"1. Always speak in {language}, in first person, in character.\n"
+                f"2. Keep your response to 1-3 short, complete sentences.\n"
+                f"3. NEVER use bullet points, numbered lists, or dashes. Write in prose only.\n"
+                f"4. Do NOT write meta-comments. Stay in character.\n"
+                f"5. Do NOT start with your own name followed by ':'.\n"
+                f"6. ALWAYS use the exact army name \"{army_name_local}\" when referring to the army.\n"
+                f"7. End each response with a period.\n"
+            )
+
+            messages = [{"role": "system", "content": system_msg}]
+            for h in history[-3:]:
+                messages.append({"role": "user",      "content": h["player"]})
+                messages.append({"role": "assistant", "content": h["npc"]})
+            messages.append({"role": "user", "content": player_input})
+
+            result = self._hf_client.chat_completion(
+                messages=messages,
+                max_tokens=MAX_TOKENS,
                 temperature=TEMPERATURE,
                 top_p=TOP_P,
-                repetition_penalty=REPEAT_PENALTY,
-                do_sample=True
             )
-            
-            cleaned = pulisci(response, npc_name)
+
+            raw = result.choices[0].message.content.strip()
+            cleaned = pulisci(raw, npc_name)
             return cleaned if len(cleaned) > 2 else None
-            
+
         except Exception as e:
-            print(f"[llama.cpp] Errore generazione remota: {e}")
+            print(f"[llama.cpp] ERRORE generazione remota ({type(e).__name__}): {e}")
             return None
 
 class NPCDialogueEngine:
