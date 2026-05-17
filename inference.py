@@ -1,13 +1,13 @@
-import json, re, os, random, pickle
+import json, re, os, random
 from llama_cpp import Llama
+from huggingface_hub import InferenceClient
+
 
 MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf"
-HF_REPO_ID    = "bartowski/Llama-3.2-1B-Instruct-GGUF"
-HF_FILENAME   = "Llama-3.2-1B-Instruct-Q6_K_L.gguf"
 MODEL_FORMAT   = "llama3"
-N_CTX          = 4096
+N_CTX          = 4096               # Abbastanza per conversazioni
 N_THREADS      = 4
-MAX_TOKENS     = 80
+MAX_TOKENS     = 80                 # 80 token = circa 2-3 frasi
 TEMPERATURE    = 0.6
 TOP_K          = 40
 TOP_P          = 0.9
@@ -17,6 +17,7 @@ ARMY_NAME = "Esercito della Sacra Croce"
 ARMY_NAME_EN = "Army of the Holy Cross"
 IMPERIAL_ARMY = "Army of the Imperial League"
 IMPERIAL_ARMY_IT = "Esercito della Lega Imperiale"
+
 
 STORY_CONTEXT = """
 COMPLETE STORY CONTEXT:
@@ -175,6 +176,7 @@ Levias (the guardian demon) is also on GROUND FLOOR, near the entrance.
 The player has just entered and met Levias.
 """
 
+
 LANG_SIGNATURES = {
     "italiano":   ["ciao","grazie","sì","perché","come","cosa","hai","sei","non","sono","ho","mi","ti","voglio","dove","questo"],
     "inglese":    ["hello","hi","thanks","yes","why","how","what","have","you","are","not","that","me","i","the","want","where"],
@@ -194,6 +196,7 @@ def hostility_tier(hostility, friendship):
     if eff >= 70: return "high"
     if eff >= 40: return "mid"
     return "low"
+
 
 INTENT_KW = {
     "saluto":      ["ciao","salve","hello","hi","hola","buongiorno","pace","greetings"],
@@ -231,6 +234,7 @@ def classify_intent(text):
         if any(kw in tl for kw in kws):
             return intent
     return "generico"
+
 
 NPC_DATA = {
     "Levias": {
@@ -381,19 +385,19 @@ def build_prompt(player_input, npc_name, hostility, friendship, language, histor
     army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
 
     if tier == "high":
-        mood = f"Attitude: HOSTILE (hostility {hostility}/100). Respond coldly. Do not share secrets."
+        mood = (f"Attitude: HOSTILE (hostility {hostility}/100). Respond coldly. Do not share secrets.")
     elif tier == "mid":
-        mood = f"Attitude: GUARDED (hostility {hostility}/100). Watchful. Secret info locked."
+        mood = (f"Attitude: GUARDED (hostility {hostility}/100). Watchful. Secret info locked.")
     else:
-        mood = f"Attitude: OPEN (hostility {hostility}/100). Willing to help."
+        mood = (f"Attitude: OPEN (hostility {hostility}/100). Willing to help.")
 
     hist = ""
     if history:
         righe = []
-        for h in history[-10:]:
+        for h in history[-3:]:
             righe.append(f"Player: {h['player']}")
             righe.append(f"You: {h['npc']}")
-        hist = "\nPREVIOUS CONVERSATION (remember this):\n" + "\n".join(righe) + "\n"
+        hist = "\n" + "\n".join(righe) + "\n"
 
     location_info = f"CURRENT LOCATION: Ground Floor, Entrance. You ({npc_name}) are here. The player just entered the castle."
 
@@ -414,7 +418,6 @@ def build_prompt(player_input, npc_name, hostility, friendship, language, histor
         f"8. ALWAYS use the exact army name \"{army_name_local}\" when referring to the army that attacked.\n"
         f"9. End each response with a period.\n"
         f"10. Never use lists. Write as a flowing sentence.\n"
-        f"11. Reference previous conversations when relevant.\n"
         f"\nEXAMPLE GOOD RESPONSE: 'The first floor holds the Claristorium as its central hub, with the Painting Hall and Promontory to the east.'\n"
         f"EXAMPLE BAD RESPONSE: '1. Claristorium 2. Painting Hall 3. Promontory'\n"
     )
@@ -422,17 +425,13 @@ def build_prompt(player_input, npc_name, hostility, friendship, language, histor
     if MODEL_FORMAT == "llama3":
         prompt = f"<|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|>"
         if history:
-            for h in history[-10:]:
+            for h in history[-3:]:
                 prompt += f"<|start_header_id|>user<|end_header_id|>\n\n{h['player']}<|eot_id|>"
                 prompt += f"<|start_header_id|>assistant<|end_header_id|>\n\n{h['npc']}<|eot_id|>"
         prompt += f"<|start_header_id|>user<|end_header_id|>\n\n{player_input}<|eot_id|>"
         prompt += f"<|start_header_id|>assistant<|end_header_id|>\n\n"
     else:
         prompt = f"<|im_start|>system\n{system}<|im_end|>\n"
-        if history:
-            for h in history[-10:]:
-                prompt += f"<|im_start|>user\n{h['player']}<|im_end|>\n"
-                prompt += f"<|im_start|>assistant\n{h['npc']}<|im_end|>\n"
         prompt += f"<|im_start|>user\n{player_input}<|im_end|>\n"
         prompt += f"<|im_start|>assistant\n"
 
@@ -463,14 +462,17 @@ def adjust_hostility(intent, hostility, friendship):
     else: return hostility
 
 def pulisci(testo, npc_name):
+    # Rimuovi prefissi comuni
     for prefix in [f"{npc_name}:", f"{npc_name} :", "Tu:", "Risposta:", "Assistant:", "Model:", 
                    "assistant", "system", "AI:", "Bot:", "User:", "Player:"]:
         if testo.lower().startswith(prefix.lower()):
             testo = testo[len(prefix):].strip()
     
+    # Rimuovi token speciali
     testo = re.sub(r'<\|[^>]+\|>', '', testo)
     testo = re.sub(r'\([^)]{8,}\)', '', testo).strip()
     
+    # Se la risposta contiene elenchi numerati o bullet points, convertili in frase
     if re.search(r'^\d+\.', testo, re.MULTILINE) or re.search(r'^[•\-*]', testo, re.MULTILINE):
         lines = testo.split('\n')
         clean_lines = []
@@ -491,6 +493,7 @@ def pulisci(testo, npc_name):
         else:
             testo = clean_lines[0] if clean_lines else testo
     
+    # Rimuovi righe con token speciali
     bad = ["###", "<|", "<start", "User:", "System:", "Assistant:",
            "Note:", "[INST]", "Giocatore:", "Nota:", "Player:", 
            "Model:", "assistant", "system", "<|eot_id|>"]
@@ -509,11 +512,13 @@ def pulisci(testo, npc_name):
     
     risultato = " ".join(pulite).strip()
     
+    # Se troppo lunga, taglia all'ultima frase completa
     if len(risultato) > 240:
         last_period = risultato[:240].rfind('.')
         if last_period > 80:
             risultato = risultato[:last_period + 1]
     
+    # Assicurati che termini con punteggiatura
     if risultato and risultato[-1] not in ".!?":
         last_punct = max(risultato.rfind('.'), risultato.rfind('!'), risultato.rfind('?'))
         if last_punct > len(risultato) // 2:
@@ -526,53 +531,142 @@ def pulisci(testo, npc_name):
 class LlamaCppWrapper:
     def __init__(self):
         self._model = None
+        self._hf_client = None
         self._available = False
+        self._using_remote = False
         self._try_load()
-
+    
     def _try_load(self):
-        if not os.path.exists(MODEL_PATH):
-            print(f"[llama.cpp] Modello non trovato in {MODEL_PATH}, avvio download da Hugging Face...")
-            if not self._download_model():
-                print("[llama.cpp] Download fallito, LLM non disponibile.")
+        if os.path.exists(MODEL_PATH):
+            try:
+                self._model = Llama(
+                    model_path=MODEL_PATH,
+                    n_ctx=N_CTX,
+                    n_threads=N_THREADS,
+                    n_gpu_layers=99,
+                    verbose=False
+                )
+                self._available = True
+                self._using_remote = False
+                print("[llama.cpp] Modello locale caricato")
                 return
+            except Exception as e:
+                print(f"[llama.cpp] Errore locale: {e}")
+        
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            print("[llama.cpp] ERRORE: variabile HF_TOKEN non trovata. "
+                  "Controlla il nome esatto su Render (case-sensitive).")
+            return
 
         try:
-            print(f"[llama.cpp] Caricamento: {MODEL_PATH} ...")
-            self._model = Llama(
-                model_path=MODEL_PATH,
-                n_ctx=N_CTX,
-                n_threads=N_THREADS,
-                n_gpu_layers=99,
-                verbose=False,
+            self._hf_client = InferenceClient(
+                model="meta-llama/Llama-3.2-1B-Instruct",
+                token=hf_token,
+            )
+            # Validazione reale: un test minimo per verificare che il token funzioni
+            self._hf_client.chat_completion(
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=5,
             )
             self._available = True
-            print(f"[llama.cpp] Pronto! Context: {N_CTX}, Max tokens: {MAX_TOKENS}")
+            self._using_remote = True
+            print("[llama.cpp] Modalità remota Hugging Face attiva e validata")
         except Exception as e:
-            print(f"[llama.cpp] Errore caricamento: {e}")
-
-    def _download_model(self) -> bool:
-        try:
-            from huggingface_hub import hf_hub_download
-            os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-            print(f"[llama.cpp] Download {HF_FILENAME} da {HF_REPO_ID} ...")
-            downloaded_path = hf_hub_download(
-                repo_id=HF_REPO_ID,
-                filename=HF_FILENAME,
-                local_dir=os.path.dirname(MODEL_PATH),
-                local_dir_use_symlinks=False,
-            )
-            print(f"[llama.cpp] Download completato: {downloaded_path}")
-            return True
-        except Exception as e:
-            print(f"[llama.cpp] Errore download: {e}")
-            return False
+            print(f"[llama.cpp] ERRORE remoto ({type(e).__name__}): {e}")
+            print("[llama.cpp] Possibili cause: token non valido, modello non accessibile, "
+                  "piano HF insufficiente.")
+    
+    @property
+    def available(self):
+        return self._available
+    
+    def generate(self, player_input, npc_name, hostility, friendship, language, history):
+        if not self._available:
+            return None
+            
+        if not self._using_remote:
+            return self._generate_local(player_input, npc_name, hostility, friendship, language, history)
+        else:
+            return self._generate_remote(player_input, npc_name, hostility, friendship, language, history)
+    
+    def _generate_local(self, player_input, npc_name, hostility, friendship, language, history):
+        npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
+        stop = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
         
+        try:
+            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
+            out = self._model(
+                prompt,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_k=TOP_K,
+                top_p=TOP_P,
+                repeat_penalty=REPEAT_PENALTY,
+                stop=stop,
+                echo=False,
+            )
+            raw = out["choices"][0]["text"].strip()
+            cleaned = pulisci(raw, npc_name)
+            return cleaned if len(cleaned) > 2 else None
+        except Exception as e:
+            print(f"[llama.cpp] Errore generazione locale: {e}")
+            return None
+    
+    def _generate_remote(self, player_input, npc_name, hostility, friendship, language, history):
+        try:
+            npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
+
+            personality = npc_data.get("personalita", f"You are {npc_name}, an ancient spirit.")
+            tier = hostility_tier(hostility, friendship)
+            army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
+
+            if tier == "high":
+                mood = f"Attitude: HOSTILE (hostility {hostility}/100). Respond coldly."
+            elif tier == "mid":
+                mood = f"Attitude: GUARDED (hostility {hostility}/100). Watchful."
+            else:
+                mood = f"Attitude: OPEN (hostility {hostility}/100). Willing to help."
+
+            system_msg = (
+                f"{STORY_CONTEXT}\n\n"
+                f"CHARACTER:\n{personality}\n\n"
+                f"{mood}\n\n"
+                f"RULES:\n"
+                f"1. Always speak in {language}, in first person, in character.\n"
+                f"2. Keep your response to 1-3 short, complete sentences.\n"
+                f"3. NEVER use bullet points, numbered lists, or dashes. Write in prose only.\n"
+                f"4. Do NOT write meta-comments. Stay in character.\n"
+                f"5. Do NOT start with your own name followed by ':'.\n"
+                f"6. ALWAYS use the exact army name \"{army_name_local}\" when referring to the army.\n"
+                f"7. End each response with a period.\n"
+            )
+
+            messages = [{"role": "system", "content": system_msg}]
+            for h in history[-3:]:
+                messages.append({"role": "user",      "content": h["player"]})
+                messages.append({"role": "assistant", "content": h["npc"]})
+            messages.append({"role": "user", "content": player_input})
+
+            result = self._hf_client.chat_completion(
+                messages=messages,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+            )
+
+            raw = result.choices[0].message.content.strip()
+            cleaned = pulisci(raw, npc_name)
+            return cleaned if len(cleaned) > 2 else None
+
+        except Exception as e:
+            print(f"[llama.cpp] ERRORE generazione remota ({type(e).__name__}): {e}")
+            return None
+
 class NPCDialogueEngine:
-    def __init__(self, memory_file="npc_memory.pkl"):
+    def __init__(self):
         self.memory = {}
-        self.memory_file = memory_file
         self.llama = LlamaCppWrapper()
-        self.load_memory()
         print(f"[Motore] LLM {'attivo' if self.llama.available else 'NON DISPONIBILE'}")
 
     def _get_memory(self, npc_name):
@@ -581,32 +675,13 @@ class NPCDialogueEngine:
     def _add_to_memory(self, npc_name, player, npc_resp):
         self.memory.setdefault(npc_name, [])
         self.memory[npc_name].append({"player": player, "npc": npc_resp})
-        self.memory[npc_name] = self.memory[npc_name][-50:]
-        self.save_memory()
+        self.memory[npc_name] = self.memory[npc_name][-10:]
 
     def reset_memory(self, npc_name=None):
         if npc_name:
             self.memory.pop(npc_name, None)
         else:
             self.memory = {}
-        self.save_memory()
-
-    def save_memory(self):
-        try:
-            with open(self.memory_file, "wb") as f:
-                pickle.dump(self.memory, f)
-        except Exception as e:
-            print(f"[Memoria] Errore salvataggio: {e}")
-
-    def load_memory(self):
-        if os.path.exists(self.memory_file):
-            try:
-                with open(self.memory_file, "rb") as f:
-                    self.memory = pickle.load(f)
-                print(f"[Memoria] Caricata da {self.memory_file}")
-            except Exception as e:
-                print(f"[Memoria] Errore caricamento: {e}")
-                self.memory = {}
 
     MALAKAI_TRIGGERS = ["oracle", "oracolo", "i deserted", "ho disertato", "i am not like them", 
                         "non sono come loro", "shame", "vergogna", "justice", "giustizia"]
@@ -614,14 +689,10 @@ class NPCDialogueEngine:
     def _check_malakai_unlock(self, text):
         return any(t in text.lower() for t in self.MALAKAI_TRIGGERS)
 
-    def generate_response(self, player_input, npc_name, hostility, friendship=0, language=None, context_vars=None, external_history=None):
+    def generate_response(self, player_input, npc_name, hostility, friendship=0, language=None, context_vars=None):
         detected_lang = language or detect_language(player_input)
         intent = classify_intent(player_input)
-        
-        if external_history is not None:
-            history = external_history
-        else:
-            history = self._get_memory(npc_name)
+        history = self._get_memory(npc_name)
 
         effective_hostility = hostility
         if npc_name == "Malakai" and self._check_malakai_unlock(player_input):
@@ -642,8 +713,7 @@ class NPCDialogueEngine:
         if npc_name == "Rigon" and intent in ("violenza", "minaccia", "bugia"):
             new_h = 100
 
-        if external_history is None:
-            self._add_to_memory(npc_name, player_input, response)
+        self._add_to_memory(npc_name, player_input, response)
 
         return {
             "response": response,
@@ -654,3 +724,29 @@ class NPCDialogueEngine:
             "retrieval_score": 0.0,
             "npc_unlocked": (npc_name == "Malakai" and effective_hostility != hostility),
         }
+
+
+if __name__ == "__main__":
+    engine = NPCDialogueEngine()
+    
+    tests = [
+        ("Levias", "What rooms are on the first floor?", 70, 0),
+        ("Levias", "Where is the Great Tree Hall?", 70, 0),
+        ("SmirBombo", "Tell me about this castle.", 30, 20),
+        ("Larry", "Do you know any jokes?", 50, 5),
+        ("Malakai", "I deserted the army. I feel shame.", 90, 0),
+        ("Rigon", "I want to help you.", 40, 10),
+        ("Allemar", "What objects are in this room?", 60, 15),
+        ("Kalessi", "I'm looking for my husband. Have you seen him?", 55, 10),
+    ]
+    
+    print("\n" + "="*60)
+    print("TEST DIALOGO NPC")
+    print("="*60)
+    
+    for npc, msg, h, f in tests:
+        result = engine.generate_response(msg, npc, h, f)
+        print(f"\n[{npc}] Hostility: {h} | Intent: {result['intent']}")
+        print(f"  Player: {msg}")
+        print(f"  {npc}: {result['response']}")
+        print(f"  New Hostility: {result['new_hostility']} | Source: {result['source']}")
