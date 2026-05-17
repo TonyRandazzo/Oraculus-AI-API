@@ -2,6 +2,8 @@ import json, re, os, random, pickle
 from llama_cpp import Llama
 
 MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf"
+HF_REPO_ID    = "bartowski/Llama-3.2-1B-Instruct-GGUF"
+HF_FILENAME   = "Llama-3.2-1B-Instruct-Q6_K_L.gguf"
 MODEL_FORMAT   = "llama3"
 N_CTX          = 4096
 N_THREADS      = 4
@@ -529,8 +531,11 @@ class LlamaCppWrapper:
 
     def _try_load(self):
         if not os.path.exists(MODEL_PATH):
-            print(f"[llama.cpp] Modello non trovato: {MODEL_PATH}")
-            return
+            print(f"[llama.cpp] Modello non trovato in {MODEL_PATH}, avvio download da Hugging Face...")
+            if not self._download_model():
+                print("[llama.cpp] Download fallito, LLM non disponibile.")
+                return
+
         try:
             print(f"[llama.cpp] Caricamento: {MODEL_PATH} ...")
             self._model = Llama(
@@ -543,48 +548,25 @@ class LlamaCppWrapper:
             self._available = True
             print(f"[llama.cpp] Pronto! Context: {N_CTX}, Max tokens: {MAX_TOKENS}")
         except Exception as e:
-            print(f"[llama.cpp] Errore: {e}")
+            print(f"[llama.cpp] Errore caricamento: {e}")
 
-    @property
-    def available(self):
-        return self._available
-
-    def generate(self, player_input, npc_name, hostility, friendship, language, history):
-        if not self._available:
-            return None
-        npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
-        stop = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
+    def _download_model(self) -> bool:
         try:
-            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
-            out = self._model(
-                prompt,
-                max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
-                top_k=TOP_K,
-                top_p=TOP_P,
-                repeat_penalty=REPEAT_PENALTY,
-                stop=stop,
-                echo=False,
+            from huggingface_hub import hf_hub_download
+            os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+            print(f"[llama.cpp] Download {HF_FILENAME} da {HF_REPO_ID} ...")
+            downloaded_path = hf_hub_download(
+                repo_id=HF_REPO_ID,
+                filename=HF_FILENAME,
+                local_dir=os.path.dirname(MODEL_PATH),
+                local_dir_use_symlinks=False,
             )
-            raw = out["choices"][0]["text"].strip()
-            cleaned = pulisci(raw, npc_name)
-            
-            if cleaned and re.match(r'^\d+\.', cleaned.strip()):
-                items = re.findall(r'\d+\.\s*([^\n]+)', cleaned)
-                if items:
-                    if len(items) == 1:
-                        cleaned = items[0]
-                    elif len(items) == 2:
-                        cleaned = f"{items[0]} and {items[1]}"
-                    else:
-                        cleaned = f"{items[0]}, {items[1]}, and {items[2]}"
-                    cleaned += "."
-            
-            return cleaned if len(cleaned) > 2 else None
+            print(f"[llama.cpp] Download completato: {downloaded_path}")
+            return True
         except Exception as e:
-            print(f"[llama.cpp] Errore generazione: {e}")
-            return None
-
+            print(f"[llama.cpp] Errore download: {e}")
+            return False
+        
 class NPCDialogueEngine:
     def __init__(self, memory_file="npc_memory.pkl"):
         self.memory = {}
