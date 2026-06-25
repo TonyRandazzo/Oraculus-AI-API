@@ -1,0 +1,157 @@
+
+# STORY_CONTEXT = """
+# COMPLETE STORY CONTEXT:
+
+# PREAMBLE:
+
+# Year 1300. In a castle named "Oraculus' Castle" lives a noble family. They are extremely rich and cultured, lovers of arts and literature.
+
+# The head of the family is an Oracle, 127 years old. He possesses superhuman and spiritual powers. Through his prophecies, he saved his family, made them rich and powerful, and established connections with spirits who inhabit the castle and coexist harmoniously with the nobles. The family tree was extensive with many heirs.
+
+# A ferocious war has been raging for five years between two armies: the Army of the Imperial League and the Army of the Holy Cross.
+
+# During the war, the Oracle falls ill. His powers weaken and diminish. The entire family and all spirits barricade themselves in the castle to care for the old man.
+
+# The commander of the Army of the Holy Cross learns of the Oracle's existence and decides to kidnap him, exploiting his foresight to win the war.
+
+# The Oracle, though ill, vaguely foresees what is about to happen but inexplicably decides to say nothing. It is a voluntary choice. According to his visions and analysis, what is about to happen is terrible but necessary for the course of events.
+
+# Alone, he orders all spirits to hide. They have seen everything and know everything, but cannot intervene. Every spirit obeys without reluctance.
+
+# Days later, the army enters the castle, kidnaps the Oracle, kills all nobles who resist (exterminating the family), and loots the castle's riches.
+
+# From that day, the spirits inhabit the castle, hoping to contact the spirits of the dead nobles. They hate all humans, considering them stupid and bearers of violence and war.
+
+# START OF NARRATION (3 years after the events narrated above):
+
+# A young knight of the Army of the Holy Cross holds ideals very different from the rest of the soldiers. He decides to desert. He escapes from the army.
+
+# On his way, he encounters the Oracle's castle in ruins (the knight knows nothing of its history) and decides to take refuge and hide inside.
+
+# The entrance door closes behind him.
+
+# The knight immediately encounters a powerful spirit and realizes he is in danger. All spirits hate humans, especially those who belong to the Army of the Holy Cross.
+
+# THREE PATHS:
+# - EGOISTIC: Destroy, kill, escape.
+# - REDEMPTION: Show you are a decent human, but don't actively help. Semi-egoistic.
+# - HELPING: Truly help the spirits. Do genuine good deeds.
+
+# ================================================================================
+# MAP DESCRIPTION - ORGANIZED BY FLOOR
+# ================================================================================
+
+# ========================================
+# GROUND FLOOR (Ruined, poorly lit)
+# ========================================
+
+# The ground floor is divided into TWO WINGS: SOUTH WING and NORTH WING.
+# The two wings are NOT connected to each other on the ground floor.
+
+# --- SOUTH WING (GROUND FLOOR) ---
+# Sequential rooms from entrance:
+# 1. ENTRANCE (GROUND FLOOR) - Player starts here. Levias is here.
+# 2. Orc Den (GROUND FLOOR)
+# 3. Great Tree Hall (GROUND FLOOR)
+# 4. Malakai's Lair (GROUND FLOOR)
+
+# --- NORTH WING (GROUND FLOOR) ---
+# IMPORTANT: The North Wing is on GROUND FLOOR but is ONLY ACCESSIBLE from the FIRST FLOOR.
+# There is NO direct entrance from the ground floor entrance.
+
+# Rooms in North Wing (all on GROUND FLOOR):
+# 1. Great Moon Garden (GROUND FLOOR)
+# 2. Water Chamber (GROUND FLOOR)
+# 3. Second Water Chamber (GROUND FLOOR)
+# 4. Monolith (GROUND FLOOR)
+# 5. Twisted Brambles Room (GROUND FLOOR) - Rigon is trapped here by Allemar
+
+# Locked doors in North Wing (GROUND FLOOR):
+# - One locked door between Second Water Chamber and Monolith
+# - One locked door between Monolith and Twisted Brambles Room
+
+# ========================================
+# FIRST FLOOR (Well-preserved, regal, cultural area)
+# ========================================
+
+# All rooms on FIRST FLOOR are well-lit with torches, chandeliers, and candelabras. Carpets and furnishings present.
+
+# Rooms on FIRST FLOOR:
+# 1. Claristorium (FIRST FLOOR) - Central hub
+
+# From Claristorium (FIRST FLOOR):
+# - EAST wing (FIRST FLOOR):
+#   a. Painting Hall (FIRST FLOOR)
+#   b. Promontory (FIRST FLOOR)
+  
+# - NORTH wing (FIRST FLOOR):
+#   a. Stars Hall (FIRST FLOOR)
+#   b. Music Hall (FIRST FLOOR)
+#   c. Papyrus Hall (FIRST FLOOR)
+#   d. East Exit (FIRST FLOOR)
+
+# Locked doors on FIRST FLOOR:
+# - One locked door between Music Hall (FIRST FLOOR) and Papyrus Hall (FIRST FLOOR)
+# - One locked door between Papyrus Hall (FIRST FLOOR) and East Exit (FIRST FLOOR)
+# - One locked door after East Exit (FIRST FLOOR)
+
+# ========================================
+# UNDERGROUND FLOOR (Damp, mossy, very poorly lit)
+# ========================================
+
+# All rooms on UNDERGROUND FLOOR are damp, with moss and water. Very poorly lit.
+
+# Access to UNDERGROUND FLOOR:
+# - From Entrance (GROUND FLOOR) - stairs lead DOWN to underground
+
+# Characters in UNDERGROUND FLOOR:
+# - Kalessi (Medusa, Rigon's wife) - wanders the underground
+# - Larry (Giant) - resides in the underground
+
+# ========================================
+# SECRET INFORMATION (ONLY REVEALED WITH HIGH FRIENDSHIP OR LOW HOSTILITY)
+# ========================================
+
+# The following information is SECRET. NPCs will ONLY reveal this information when:
+# - Friendship is HIGH (friendship > 60) OR
+# - Hostility is VERY LOW (hostility < 20)
+
+# NPCs may HINT at these secrets when hostility is low (hostility < 40) but NOT reveal them fully.
+
+# SECRET #1: Great Tree Hall Connection
+# - Great Tree Hall (GROUND FLOOR, South Wing) contains a SECRET PASSAGE that leads UP to Papyrus Hall (FIRST FLOOR)
+
+# SECRET #2: North Wing Access Points
+# - The North Wing (GROUND FLOOR) can be reached from the FIRST FLOOR via two connections:
+#   a. From Painting Hall (FIRST FLOOR) - hidden stairs lead DOWN to Great Moon Garden (GROUND FLOOR)
+#   b. From Papyrus Hall (FIRST FLOOR) - hidden stairs lead DOWN to Twisted Brambles Room (GROUND FLOOR)
+
+# SECRET #3: Stars Hall Bell Tower
+# - From Stars Hall (FIRST FLOOR), there is a SECRET ENTRANCE that leads UP to the bell tower
+
+# SECRET #4: Malakai's Lair Door
+# - In Malakai's Lair (GROUND FLOOR, South Wing), there is a LOCKED DOOR that leads to the last room of the UNDERGROUND FLOOR
+
+# SECRET #5: Papyrus Hall Passage
+# - Papyrus Hall (FIRST FLOOR) contains a SECRET PASSAGE that leads DOWN to Great Tree Hall (GROUND FLOOR, South Wing)
+
+# SECRET #6: Painting Hall Connection
+# - Painting Hall (FIRST FLOOR) has a SECRET STAIRCASE that leads DOWN to Great Moon Garden (GROUND FLOOR, North Wing)
+
+# ========================================
+# SUMMARY TABLE BY FLOOR
+# ========================================
+
+# GROUND FLOOR (South Wing): Entrance, Orc Den, Great Tree Hall, Malakai's Lair
+# GROUND FLOOR (North Wing): Great Moon Garden, Water Chamber, Second Water Chamber, Monolith, Twisted Brambles Room
+# FIRST FLOOR: Claristorium, Painting Hall, Promontory, Stars Hall, Music Hall, Papyrus Hall, East Exit
+# UNDERGROUND: Damp tunnels and chambers
+
+# ================================================================================
+# CURRENT SCENE
+# ================================================================================
+
+# The player is at the ENTRANCE on GROUND FLOOR.
+# Levias (the guardian demon) is also on GROUND FLOOR, near the entrance.
+# The player has just entered and met Levias.
+# """

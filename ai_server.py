@@ -23,7 +23,7 @@ print("  ORACULUS AI — Server REST per Godot")
 print("=" * 60)
 print()
 
-engine = NPCDialogueEngine()   
+engine = NPCDialogueEngine()
 
 print(f"\n[SERVER] In ascolto su http://{HOST}:{PORT}")
 print("[SERVER] Premi Ctrl+C per fermare.\n")
