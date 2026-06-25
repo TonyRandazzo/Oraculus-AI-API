@@ -1,57 +1,19 @@
-import json, re, os, random, threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
+import json, re, os, random
 from llama_cpp import Llama
+from huggingface_hub import InferenceClient
 
-# ============================================================================
-# CONFIGURAZIONE
-# ============================================================================
-# Modello grande (locale) e modello piccolo (remoto / macchine con poca RAM).
-MODEL_PATH          = os.environ.get("MODEL_PATH", "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf")
-FALLBACK_MODEL_PATH = os.environ.get("FALLBACK_MODEL_PATH", "tinyllama-v0.q2_k.gguf")
-PRIMARY_FORMAT      = "llama3"
-FALLBACK_FORMAT     = "chatml"
+MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf"
+MODEL_FORMAT   = "llama3"
+N_CTX          = 4096
+N_THREADS      = 4
+MAX_TOKENS     = 80
+TEMPERATURE    = 0.6
+TOP_K          = 40
+TOP_P          = 0.9
+REPEAT_PENALTY = 1.1
 
-# Contesto: il modello grande regge 4096, il piccolo lo teniamo basso per la RAM.
-N_CTX_PRIMARY   = int(os.environ.get("N_CTX_PRIMARY", 4096))
-N_CTX_FALLBACK  = int(os.environ.get("N_CTX_FALLBACK", 1024))
-N_THREADS       = int(os.environ.get("N_THREADS", 4))
-MAX_TOKENS      = 80
-TEMPERATURE     = 0.6
-TOP_K           = 40
-TOP_P           = 0.9
-REPEAT_PENALTY  = 1.1
-
-# Porta: Render (e simili) la passano via env PORT.
-PORT = int(os.environ.get("PORT", 8000))
-
-# Origine consentita per il CORS. "*" va bene per un gioco pubblico su itch.io;
-# se vuoi restringere usa: os.environ["CORS_ORIGIN"] = "https://html-classic.itch.zone"
-CORS_ORIGIN = os.environ.get("CORS_ORIGIN", "*")
-
-# ----------------------------------------------------------------------------
-# SCELTA DELLA MODALITA' DEL MODELLO
-# ----------------------------------------------------------------------------
-# OST_MODEL_MODE puo' valere:
-#   "local"  -> carica il modello GRANDE (per la tua macchina)
-#   "small"  -> carica il modello PICCOLO (TinyLlama) – server con ~1-2 GB RAM
-#   "none"   -> NON carica nulla, usa solo le risposte scriptate di FALLBACK
-#   "auto"   -> (default) se rileva un ambiente remoto usa "small", altrimenti "local"
-#
-# IMPORTANTISSIMO: su un container con poca RAM (es. free tier 512 MB) il caricamento
-# del modello grande viene ucciso dal sistema (OOM) PRIMA di servire qualsiasi
-# richiesta: il processo muore, nessuna risposta arriva e il browser lo segnala
-# come errore CORS. Questa variabile evita di TENTARE quel caricamento.
-# Su Render imposta OST_MODEL_MODE = small  (oppure none se anche il piccolo non entra).
-def _resolve_mode():
-    mode = os.environ.get("OST_MODEL_MODE", "auto").lower()
-    if mode in ("local", "small", "none"):
-        return mode
-    # auto: Render espone RENDER=true; teniamo anche un flag generico IS_REMOTE.
-    if os.environ.get("RENDER") or os.environ.get("IS_REMOTE"):
-        return "small"
-    return "local"
-
+HF_MODEL    = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
+HF_PROVIDER = os.environ.get("HF_PROVIDER", "auto")
 
 ARMY_NAME = "Esercito della Sacra Croce"
 ARMY_NAME_EN = "Army of the Holy Cross"
@@ -366,7 +328,7 @@ def enforce_army_name(text, language):
         result = pattern.sub(army_correct, result)
     return result
 
-def build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data, model_format):
+def build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data):
     personality = npc_data.get("personalita", f"You are {npc_name}.")
     tier = hostility_tier(hostility, friendship)
     army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
@@ -409,7 +371,7 @@ def build_prompt(player_input, npc_name, hostility, friendship, language, histor
         f"EXAMPLE BAD RESPONSE: '1. Claristorium 2. Painting Hall 3. Promontory'\n"
     )
 
-    if model_format == "llama3":
+    if MODEL_FORMAT == "llama3":
         prompt = f"<|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|>"
         if history:
             for h in history[-3:]:
@@ -423,6 +385,35 @@ def build_prompt(player_input, npc_name, hostility, friendship, language, histor
         prompt += f"<|im_start|>assistant\n"
 
     return prompt
+
+
+def build_system_msg(npc_name, hostility, friendship, language, npc_data):
+    """System message per le API chat (ramo remoto)."""
+    personality = npc_data.get("personalita", f"You are {npc_name}, an ancient spirit.")
+    tier = hostility_tier(hostility, friendship)
+    army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
+
+    if tier == "high":
+        mood = f"Attitude: HOSTILE (hostility {hostility}/100). Respond coldly."
+    elif tier == "mid":
+        mood = f"Attitude: GUARDED (hostility {hostility}/100). Watchful."
+    else:
+        mood = f"Attitude: OPEN (hostility {hostility}/100). Willing to help."
+
+    return (
+        f"{STORY_CONTEXT}\n\n"
+        f"CHARACTER:\n{personality}\n\n"
+        f"{mood}\n\n"
+        f"RULES:\n"
+        f"1. Always speak in {language}, in first person, in character.\n"
+        f"2. Keep your response to 1-3 short, complete sentences.\n"
+        f"3. NEVER use bullet points, numbered lists, or dashes. Write in prose only.\n"
+        f"4. Do NOT write meta-comments. Stay in character.\n"
+        f"5. Do NOT start with your own name followed by ':'.\n"
+        f"6. ALWAYS use the exact army name \"{army_name_local}\" when referring to the army.\n"
+        f"7. End each response with a period.\n"
+    )
+
 
 STOP_TOKENS_MAP = {
     "llama3": ["<|eot_id|>", "<|start_header_id|>", "<|end_header_id|>", "\n\n\n", "User:", "Player:"],
@@ -510,114 +501,132 @@ def pulisci(testo, npc_name):
     return risultato if risultato else "..."
 
 
-# ============================================================================
-# WRAPPER MODELLO
-# ============================================================================
 class LlamaCppWrapper:
     def __init__(self):
         self._model = None
+        self._hf_client = None
         self._available = False
-        self.model_format = None
-        self.status = "none"          # "primary" | "fallback" | "none"
-        self._lock = threading.Lock()  # llama.cpp NON e' thread-safe: serializziamo
+        self._using_remote = False
+        self._last_error = None          
+        self._remote_model = HF_MODEL
+        self._remote_provider = HF_PROVIDER
         self._try_load()
 
-    def _load_one(self, path, fmt, n_ctx, n_gpu_layers):
-        """Carica un singolo modello. Ritorna True se ok."""
-        if not os.path.exists(path):
-            print(f"[llama.cpp] File non trovato: {path}")
-            return False
-        try:
-            self._model = Llama(
-                model_path=path,
-                n_ctx=n_ctx,
-                n_threads=N_THREADS,
-                n_gpu_layers=n_gpu_layers,
-                verbose=False,
-            )
-            self.model_format = fmt
-            self._available = True
-            return True
-        except Exception as e:
-            print(f"[llama.cpp] Errore caricamento {path}: {e}")
-            return False
-
     def _try_load(self):
-        mode = _resolve_mode()
-        print(f"[llama.cpp] Modalita' richiesta: {mode}")
+        if os.path.exists(MODEL_PATH):
+            try:
+                self._model = Llama(
+                    model_path=MODEL_PATH,
+                    n_ctx=N_CTX,
+                    n_threads=N_THREADS,
+                    n_gpu_layers=99,
+                    verbose=False
+                )
+                self._available = True
+                self._using_remote = False
+                print("[llama.cpp] Modello locale caricato")
+                return
+            except Exception as e:
+                self._last_error = f"local: {type(e).__name__}: {e}"
+                print(f"[llama.cpp] Errore locale: {e}")
 
-        if mode == "none":
-            print("[llama.cpp] Nessun modello caricato (mode=none): solo risposte scriptate.")
-            self.status = "none"
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            self._last_error = "HF_TOKEN non trovata"
+            print("[llama.cpp] ERRORE: variabile HF_TOKEN non trovata.")
             return
 
-        if mode == "local":
-            # Macchina locale: prova il modello GRANDE, poi ripiega sul piccolo.
-            if self._load_one(MODEL_PATH, PRIMARY_FORMAT, N_CTX_PRIMARY, n_gpu_layers=99):
-                self.status = "primary"
-                print("[llama.cpp] Modello primario (grande) caricato")
-                return
-            if self._load_one(FALLBACK_MODEL_PATH, FALLBACK_FORMAT, N_CTX_FALLBACK, n_gpu_layers=0):
-                self.status = "fallback"
-                print("[llama.cpp] Modello di fallback (piccolo) caricato")
-                return
+        try:
+            try:
+                self._hf_client = InferenceClient(provider=HF_PROVIDER, token=hf_token)
+            except TypeError:
+                print("[llama.cpp] huggingface_hub senza supporto 'provider': uso client classico.")
+                self._hf_client = InferenceClient(token=hf_token)
 
-        if mode == "small":
-            # Remoto / poca RAM: NON tocchiamo il modello grande, andiamo diretti al piccolo.
-            if self._load_one(FALLBACK_MODEL_PATH, FALLBACK_FORMAT, N_CTX_FALLBACK, n_gpu_layers=0):
-                self.status = "fallback"
-                print("[llama.cpp] Modello piccolo caricato (mode=small)")
-                return
-
-        print("[llama.cpp] Nessun modello disponibile: il server resta su con sole risposte scriptate.")
-        self._available = False
-        self.status = "none"
+            self._hf_client.chat_completion(
+                model=HF_MODEL,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=5,
+            )
+            self._available = True
+            self._using_remote = True
+            print(f"[llama.cpp] Modalita' remota attiva e validata "
+                  f"(provider={HF_PROVIDER}, model={HF_MODEL})")
+        except Exception as e:
+            self._last_error = f"remote: {type(e).__name__}: {e}"
+            self._available = False
+            print(f"[llama.cpp] ERRORE remoto ({type(e).__name__}): {e}")
 
     @property
     def available(self):
         return self._available
 
-    def generate(self, player_input, npc_name, hostility, friendship, language, history,
-                 max_tokens=None, temperature=None):
-        if not self._available or self._model is None:
+    def generate(self, player_input, npc_name, hostility, friendship, language, history):
+        if not self._available:
             return None
 
-        npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
-        stop = STOP_TOKENS_MAP.get(self.model_format, STOP_TOKENS_MAP["chatml"])
+        if not self._using_remote:
+            return self._generate_local(player_input, npc_name, hostility, friendship, language, history)
+        else:
+            return self._generate_remote(player_input, npc_name, hostility, friendship, language, history)
 
-        mt = int(max_tokens) if max_tokens else MAX_TOKENS
-        temp = float(temperature) if temperature is not None else TEMPERATURE
+    def _generate_local(self, player_input, npc_name, hostility, friendship, language, history):
+        npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
+        stop = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
 
         try:
-            prompt = build_prompt(player_input, npc_name, hostility, friendship,
-                                  language, history, npc_data, self.model_format)
-            with self._lock:  # una generazione alla volta
-                out = self._model(
-                    prompt,
-                    max_tokens=mt,
-                    temperature=temp,
-                    top_k=TOP_K,
-                    top_p=TOP_P,
-                    repeat_penalty=REPEAT_PENALTY,
-                    stop=stop,
-                    echo=False,
-                )
+            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
+            out = self._model(
+                prompt,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_k=TOP_K,
+                top_p=TOP_P,
+                repeat_penalty=REPEAT_PENALTY,
+                stop=stop,
+                echo=False,
+            )
             raw = out["choices"][0]["text"].strip()
             cleaned = pulisci(raw, npc_name)
             return cleaned if len(cleaned) > 2 else None
         except Exception as e:
-            print(f"[llama.cpp] Errore generazione: {e}")
+            self._last_error = f"gen_local: {type(e).__name__}: {e}"
+            print(f"[llama.cpp] Errore generazione locale: {e}")
             return None
 
+    def _generate_remote(self, player_input, npc_name, hostility, friendship, language, history):
+        try:
+            npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
+            system_msg = build_system_msg(npc_name, hostility, friendship, language, npc_data)
 
-# ============================================================================
-# MOTORE NPC
-# ============================================================================
+            messages = [{"role": "system", "content": system_msg}]
+            for h in history[-3:]:
+                messages.append({"role": "user",      "content": h["player"]})
+                messages.append({"role": "assistant", "content": h["npc"]})
+            messages.append({"role": "user", "content": player_input})
+
+            result = self._hf_client.chat_completion(
+                model=HF_MODEL,          # <-- la correzione chiave: modello servito, esplicito
+                messages=messages,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+            )
+
+            raw = result.choices[0].message.content.strip()
+            cleaned = pulisci(raw, npc_name)
+            return cleaned if len(cleaned) > 2 else None
+
+        except Exception as e:
+            self._last_error = f"gen_remote: {type(e).__name__}: {e}"
+            print(f"[llama.cpp] ERRORE generazione remota ({type(e).__name__}): {e}")
+            return None
+
 class NPCDialogueEngine:
     def __init__(self):
         self.memory = {}
         self.llama = LlamaCppWrapper()
-        print(f"[Motore] LLM {'attivo (' + self.llama.status + ')' if self.llama.available else 'NON DISPONIBILE'}")
+        print(f"[Motore] LLM {'attivo' if self.llama.available else 'NON DISPONIBILE'}")
 
     def _get_memory(self, npc_name):
         return self.memory.get(npc_name, [])
@@ -639,23 +648,16 @@ class NPCDialogueEngine:
     def _check_malakai_unlock(self, text):
         return any(t in text.lower() for t in self.MALAKAI_TRIGGERS)
 
-    def generate_response(self, player_input, npc_name, hostility, friendship=0, language=None,
-                          context_vars=None, external_history=None,
-                          max_tokens=None, temperature=None):
+    def generate_response(self, player_input, npc_name, hostility, friendship=0, language=None, context_vars=None):
         detected_lang = language or detect_language(player_input)
         intent = classify_intent(player_input)
-
-        # Se il client invia la sua cronologia la usiamo (server stateless, utile su itch.io),
-        # altrimenti ricadiamo sulla memoria interna del motore.
-        history = external_history if external_history else self._get_memory(npc_name)
+        history = self._get_memory(npc_name)
 
         effective_hostility = hostility
         if npc_name == "Malakai" and self._check_malakai_unlock(player_input):
             effective_hostility = min(hostility, 20)
 
-        response = self.llama.generate(player_input, npc_name, effective_hostility, friendship,
-                                       detected_lang, history,
-                                       max_tokens=max_tokens, temperature=temperature)
+        response = self.llama.generate(player_input, npc_name, effective_hostility, friendship, detected_lang, history)
         source = "llama"
 
         if not response:
@@ -682,118 +684,27 @@ class NPCDialogueEngine:
             "npc_unlocked": (npc_name == "Malakai" and effective_hostility != hostility),
         }
 
-
-# ============================================================================
-# SERVER HTTP (solo libreria standard, niente Flask/FastAPI)
-# ============================================================================
-ENGINE = NPCDialogueEngine()
-
-
-def _coerce_history(raw):
-    """Normalizza la conversation_history del client nel formato {player, npc}."""
-    if not isinstance(raw, list):
-        return None
-    out = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if "player" in item and "npc" in item:
-            out.append({"player": str(item["player"]), "npc": str(item["npc"])})
-    return out or None
-
-
-class Handler(BaseHTTPRequestHandler):
-    # --- helper CORS ---
-    def _cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
-        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Max-Age", "86400")
-
-    def _send_json(self, code, payload):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self._cors_headers()
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    # --- preflight: fondamentale, altrimenti il browser blocca la POST ---
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self._cors_headers()
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    # --- health check / wake-up ---
-    def do_GET(self):
-        if self.path in ("/", "/health"):
-            self._send_json(200, {
-                "status": "ok",
-                "model": ENGINE.llama.status,
-                "llm_available": ENGINE.llama.available,
-            })
-        else:
-            self._send_json(404, {"error": "not found"})
-
-    def do_POST(self):
-        if self.path != "/chat":
-            self._send_json(404, {"error": "not found"})
-            return
-
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(length) if length else b"{}"
-            data = json.loads(raw_body.decode("utf-8"))
-        except Exception as e:
-            self._send_json(400, {"error": f"bad json: {e}"})
-            return
-
-        player_input = data.get("player_input", "")
-        npc_name     = data.get("npc_name", "Levias")
-        hostility    = int(data.get("hostility", 70))
-        friendship   = int(data.get("friendship", 0))
-        language     = data.get("language") or None
-        max_tokens   = data.get("max_tokens")
-        temperature  = data.get("temperature")
-        history      = _coerce_history(data.get("conversation_history"))
-
-        if not player_input:
-            self._send_json(400, {"error": "player_input mancante"})
-            return
-
-        try:
-            result = ENGINE.generate_response(
-                player_input=player_input,
-                npc_name=npc_name,
-                hostility=hostility,
-                friendship=friendship,
-                language=language,
-                external_history=history,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            self._send_json(200, result)
-        except Exception as e:
-            print(f"[server] Errore /chat: {e}")
-            self._send_json(500, {"error": str(e)})
-
-    # silenzia i log di default (troppo rumorosi)
-    def log_message(self, fmt, *args):
-        return
-
-
-def main():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"[server] In ascolto su 0.0.0.0:{PORT}  (CORS origin: {CORS_ORIGIN})")
-    print(f"[server] Stato modello: {ENGINE.llama.status}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n[server] Arresto.")
-        server.shutdown()
-
-
 if __name__ == "__main__":
-    main()
+    engine = NPCDialogueEngine()
+
+    tests = [
+        ("Levias", "What rooms are on the first floor?", 70, 0),
+        ("Levias", "Where is the Great Tree Hall?", 70, 0),
+        ("SmirBombo", "Tell me about this castle.", 30, 20),
+        ("Larry", "Do you know any jokes?", 50, 5),
+        ("Malakai", "I deserted the army. I feel shame.", 90, 0),
+        ("Rigon", "I want to help you.", 40, 10),
+        ("Allemar", "What objects are in this room?", 60, 15),
+        ("Kalessi", "I'm looking for my husband. Have you seen him?", 55, 10),
+    ]
+
+    print("\n" + "="*60)
+    print("TEST DIALOGO NPC")
+    print("="*60)
+
+    for npc, msg, h, f in tests:
+        result = engine.generate_response(msg, npc, h, f)
+        print(f"\n[{npc}] Hostility: {h} | Intent: {result['intent']}")
+        print(f"  Player: {msg}")
+        print(f"  {npc}: {result['response']}")
+        print(f"  New Hostility: {result['new_hostility']} | Source: {result['source']}")
