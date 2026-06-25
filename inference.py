@@ -500,7 +500,7 @@ class LlamaCppWrapper:
 
         try:
             self._hf_client = InferenceClient(
-                model="microsoft/phi-2",
+                model="mistralai/Mistral-7B-Instruct-v0.3",
                 token=hf_token,
             )
             self._hf_client.chat_completion(
