@@ -73,7 +73,17 @@ class NPCHandler(BaseHTTPRequestHandler):
         elif path == "/npcs":
             from inference import NPC_DATA
             self.send_json(200, {"npcs": sorted(NPC_DATA.keys())})
-
+        elif path == "/debug":
+            import os
+            hf_token = os.environ.get("HF_TOKEN", "")
+            self.send_json(200, {
+                "hf_token_present": bool(hf_token),
+                "hf_token_prefix": hf_token[:8] + "..." if hf_token else "MISSING",
+                "llama_available": engine.llama.available,
+                "using_remote": engine.llama._using_remote,
+                "model_loaded": engine.llama._model is not None,
+                "hf_client_loaded": engine.llama._hf_client is not None,
+            })
         elif path == "/":
             self.send_json(200, {
                 "service": "Oraculus AI NPC Dialogue",
