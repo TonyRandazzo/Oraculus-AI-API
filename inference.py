@@ -1,9 +1,10 @@
 import json, re, os, random
 from llama_cpp import Llama
-from huggingface_hub import InferenceClient
 
 MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf"
-MODEL_FORMAT   = "llama3"
+FALLBACK_MODEL_PATH = "tinyllama-v0.q2_k.gguf"
+PRIMARY_FORMAT = "llama3"
+FALLBACK_FORMAT = "chatml"
 N_CTX          = 4096
 N_THREADS      = 4
 MAX_TOKENS     = 80
@@ -325,7 +326,7 @@ def enforce_army_name(text, language):
         result = pattern.sub(army_correct, result)
     return result
 
-def build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data):
+def build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data, model_format):
     personality = npc_data.get("personalita", f"You are {npc_name}.")
     tier = hostility_tier(hostility, friendship)
     army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
@@ -368,7 +369,7 @@ def build_prompt(player_input, npc_name, hostility, friendship, language, histor
         f"EXAMPLE BAD RESPONSE: '1. Claristorium 2. Painting Hall 3. Promontory'\n"
     )
 
-    if MODEL_FORMAT == "llama3":
+    if model_format == "llama3":
         prompt = f"<|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|>"
         if history:
             for h in history[-3:]:
@@ -471,9 +472,8 @@ def pulisci(testo, npc_name):
 class LlamaCppWrapper:
     def __init__(self):
         self._model = None
-        self._hf_client = None
         self._available = False
-        self._using_remote = False
+        self.model_format = None
         self._try_load()
 
     def _try_load(self):
@@ -487,51 +487,45 @@ class LlamaCppWrapper:
                     verbose=False
                 )
                 self._available = True
-                self._using_remote = False
-                print("[llama.cpp] Modello locale caricato")
+                self.model_format = PRIMARY_FORMAT
+                print("[llama.cpp] Modello primario caricato")
                 return
             except Exception as e:
-                print(f"[llama.cpp] Errore locale: {e}")
+                print(f"[llama.cpp] Errore caricamento primario: {e}")
 
-        hf_token = os.environ.get("HF_TOKEN")
-        if not hf_token:
-            print("[llama.cpp] ERRORE: variabile HF_TOKEN non trovata.")
-            return
+        if os.path.exists(FALLBACK_MODEL_PATH):
+            try:
+                self._model = Llama(
+                    model_path=FALLBACK_MODEL_PATH,
+                    n_ctx=N_CTX,
+                    n_threads=N_THREADS,
+                    n_gpu_layers=0,
+                    verbose=False
+                )
+                self._available = True
+                self.model_format = FALLBACK_FORMAT
+                print("[llama.cpp] Modello di fallback (leggero) caricato")
+                return
+            except Exception as e:
+                print(f"[llama.cpp] Errore caricamento fallback: {e}")
 
-        try:
-            self._hf_client = InferenceClient(
-                model="mistralai/Mistral-7B-Instruct-v0.3",
-                token=hf_token,
-            )
-            self._hf_client.chat_completion(
-                messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=5,
-            )
-            self._available = True
-            self._using_remote = True
-            print("[llama.cpp] Modalità remota Hugging Face attiva e validata")
-        except Exception as e:
-            print(f"[llama.cpp] ERRORE remoto ({type(e).__name__}): {e}")
+        print("[llama.cpp] Nessun modello disponibile.")
+        self._available = False
+        self.model_format = None
 
     @property
     def available(self):
         return self._available
 
     def generate(self, player_input, npc_name, hostility, friendship, language, history):
-        if not self._available:
+        if not self._available or self._model is None:
             return None
 
-        if not self._using_remote:
-            return self._generate_local(player_input, npc_name, hostility, friendship, language, history)
-        else:
-            return self._generate_remote(player_input, npc_name, hostility, friendship, language, history)
-
-    def _generate_local(self, player_input, npc_name, hostility, friendship, language, history):
         npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
-        stop = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
+        stop = STOP_TOKENS_MAP.get(self.model_format, STOP_TOKENS_MAP["chatml"])
 
         try:
-            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data)
+            prompt = build_prompt(player_input, npc_name, hostility, friendship, language, history, npc_data, self.model_format)
             out = self._model(
                 prompt,
                 max_tokens=MAX_TOKENS,
@@ -546,57 +540,7 @@ class LlamaCppWrapper:
             cleaned = pulisci(raw, npc_name)
             return cleaned if len(cleaned) > 2 else None
         except Exception as e:
-            print(f"[llama.cpp] Errore generazione locale: {e}")
-            return None
-
-    def _generate_remote(self, player_input, npc_name, hostility, friendship, language, history):
-        try:
-            npc_data = NPC_DATA.get(npc_name, {"personalita": f"You are {npc_name}, an ancient spirit."})
-
-            personality = npc_data.get("personalita", f"You are {npc_name}, an ancient spirit.")
-            tier = hostility_tier(hostility, friendship)
-            army_name_local = ARMY_NAME if language == "italiano" else ARMY_NAME_EN
-
-            if tier == "high":
-                mood = f"Attitude: HOSTILE (hostility {hostility}/100). Respond coldly."
-            elif tier == "mid":
-                mood = f"Attitude: GUARDED (hostility {hostility}/100). Watchful."
-            else:
-                mood = f"Attitude: OPEN (hostility {hostility}/100). Willing to help."
-
-            system_msg = (
-                f"{STORY_CONTEXT}\n\n"
-                f"CHARACTER:\n{personality}\n\n"
-                f"{mood}\n\n"
-                f"RULES:\n"
-                f"1. Always speak in {language}, in first person, in character.\n"
-                f"2. Keep your response to 1-3 short, complete sentences.\n"
-                f"3. NEVER use bullet points, numbered lists, or dashes. Write in prose only.\n"
-                f"4. Do NOT write meta-comments. Stay in character.\n"
-                f"5. Do NOT start with your own name followed by ':'.\n"
-                f"6. ALWAYS use the exact army name \"{army_name_local}\" when referring to the army.\n"
-                f"7. End each response with a period.\n"
-            )
-
-            messages = [{"role": "system", "content": system_msg}]
-            for h in history[-3:]:
-                messages.append({"role": "user",      "content": h["player"]})
-                messages.append({"role": "assistant", "content": h["npc"]})
-            messages.append({"role": "user", "content": player_input})
-
-            result = self._hf_client.chat_completion(
-                messages=messages,
-                max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-            )
-
-            raw = result.choices[0].message.content.strip()
-            cleaned = pulisci(raw, npc_name)
-            return cleaned if len(cleaned) > 2 else None
-
-        except Exception as e:
-            print(f"[llama.cpp] ERRORE generazione remota ({type(e).__name__}): {e}")
+            print(f"[llama.cpp] Errore generazione: {e}")
             return None
 
 class NPCDialogueEngine:
