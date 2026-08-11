@@ -1,5 +1,10 @@
 import json, re, os, random
-from llama_cpp import Llama
+
+try:
+    from llama_cpp import Llama
+except ImportError:
+    Llama = None
+
 from huggingface_hub import InferenceClient
 
 MODEL_PATH     = "models/Llama-3.2-1B-Instruct-Q6_K_L.gguf"
@@ -12,7 +17,10 @@ TOP_K          = 40
 TOP_P          = 0.9
 REPEAT_PENALTY = 1.1
 
-HF_MODEL    = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
+# Stesso identico modello del file locale (Llama-3.2-1B-Instruct), servito
+# via API invece che caricato in RAM: permette il deploy su Render senza
+# scaricare/eseguire il gguf in locale.
+HF_MODEL    = os.environ.get("HF_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
 HF_PROVIDER = os.environ.get("HF_PROVIDER", "auto")
 
 ARMY_NAME = "Esercito della Sacra Croce"
@@ -591,7 +599,9 @@ class LlamaCppWrapper:
         self._try_load()
 
     def _try_load(self):
-        if os.path.exists(MODEL_PATH):
+        if Llama is None:
+            print("[llama.cpp] Pacchetto llama_cpp non installato: salto il caricamento locale (modalita' API remota).")
+        elif os.path.exists(MODEL_PATH):
             try:
                 self._model = Llama(
                     model_path=MODEL_PATH,

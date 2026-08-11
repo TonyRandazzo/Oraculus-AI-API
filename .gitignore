@@ -1,4 +1,13 @@
 __pycache__/
 **/__pycache__/
 
-/tinyllama-v0.q2_k.gguf
+# Modelli LLM locali: su Render il modello viene servito via API, non caricato da file
+*.gguf
+models/
+
+# Stato runtime generato dal server, non va versionato
+npc_memory.pkl
+*.pkl
+
+# Ambiente
+.env

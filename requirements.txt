@@ -1,2 +1,1 @@
-llama-cpp-python
-huggingface-hub
+huggingface-hub>=0.24
