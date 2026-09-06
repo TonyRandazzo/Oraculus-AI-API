@@ -1,4 +1,4 @@
-import json, re, os, random
+import json, re, os, random, time
 
 try:
     from llama_cpp import Llama
@@ -764,9 +764,27 @@ class LlamaCppWrapper:
         self._last_error = None          
         self._remote_model = HF_MODEL
         self._remote_provider = HF_PROVIDER
+        self._last_load_attempt = 0.0
         self._try_load()
 
+    RELOAD_COOLDOWN = 60.0
+
+    def _ensure_available(self):
+        # Il caricamento avviene una sola volta all'avvio: se su Render la
+        # prima chiamata a HF fallisce (token, modello gated, crediti, rete)
+        # il server resterebbe in fallback fino al redeploy. Riprova a
+        # intervalli, cosi' il servizio si riprende da solo.
+        if self._available:
+            return True
+        now = time.monotonic()
+        if now - self._last_load_attempt < self.RELOAD_COOLDOWN:
+            return False
+        print("[llama.cpp] LLM non disponibile: nuovo tentativo di caricamento...")
+        self._try_load()
+        return self._available
+
     def _try_load(self):
+        self._last_load_attempt = time.monotonic()
         if Llama is None:
             print("[llama.cpp] Pacchetto llama_cpp non installato: salto il caricamento locale (modalita' API remota).")
         elif os.path.exists(MODEL_PATH):
@@ -817,8 +835,12 @@ class LlamaCppWrapper:
     def available(self):
         return self._available
 
+    @property
+    def last_error(self):
+        return self._last_error
+
     def generate(self, player_input, npc_name, hostility, friendship, language, history, context_vars=None):
-        if not self._available:
+        if not self._ensure_available():
             return None
 
         if not self._using_remote:
@@ -879,7 +901,7 @@ class LlamaCppWrapper:
             return None
 
     def generate_riddle(self, door_id: str, language: str = "inglese", theme: str = "", session_id: str = "") -> "dict | None":
-        if not self._available:
+        if not self._ensure_available():
             return None
 
         if not theme:
