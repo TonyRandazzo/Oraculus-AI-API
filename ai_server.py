@@ -75,7 +75,7 @@ class NPCHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"npcs": sorted(NPC_DATA.keys())})
         elif path == "/debug":
             import os
-            from inference import HF_MODEL, HF_PROVIDER
+            from inference import HF_MODEL_CANDIDATES, HF_PROVIDER
             hf_token = os.environ.get("HF_TOKEN", "")
             self.send_json(200, {
                 "hf_token_present": bool(hf_token),
@@ -84,7 +84,8 @@ class NPCHandler(BaseHTTPRequestHandler):
                 "using_remote": engine.llama._using_remote,
                 "model_loaded": engine.llama._model is not None,
                 "hf_client_loaded": engine.llama._hf_client is not None,
-                "hf_model": HF_MODEL,
+                "hf_model_active": engine.llama._remote_model,
+                "hf_model_candidates": HF_MODEL_CANDIDATES,
                 "hf_provider": HF_PROVIDER,
                 "last_error": engine.llama.last_error,
             })

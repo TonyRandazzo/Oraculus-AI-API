@@ -17,11 +17,23 @@ TOP_K          = 40
 TOP_P          = 0.9
 REPEAT_PENALTY = 1.1
 
-# Stesso identico modello del file locale (Llama-3.2-1B-Instruct), servito
-# via API invece che caricato in RAM: permette il deploy su Render senza
-# scaricare/eseguire il gguf in locale.
-HF_MODEL    = os.environ.get("HF_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
+# Modello servito via API invece che caricato in RAM: permette il deploy su
+# Render senza scaricare/eseguire il gguf.
+#
+# Il modello NON puo' essere lo stesso del file locale: Llama-3.2-1B-Instruct
+# e' servito dal solo provider featherless-ai, quindi fallisce con
+# "model_not_supported" su ogni account che non lo abbia abilitato.
+# HF_MODEL_CANDIDATES elenca modelli non gated e serviti da piu' provider:
+# al caricamento si prende il primo che risponde davvero.
+HF_MODEL    = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 HF_PROVIDER = os.environ.get("HF_PROVIDER", "auto")
+
+HF_MODEL_CANDIDATES = [
+    HF_MODEL,
+    "Qwen/Qwen2.5-7B-Instruct",       # together, featherless
+    "Qwen/Qwen3-4B-Instruct-2507",    # nscale, featherless
+    "meta-llama/Llama-3.1-8B-Instruct",  # novita, nscale, featherless, deepinfra (gated)
+]
 
 ARMY_NAME = "Esercito della Sacra Croce"
 ARMY_NAME_EN = "Army of the Holy Cross"
@@ -817,15 +829,35 @@ class LlamaCppWrapper:
                 print("[llama.cpp] huggingface_hub senza supporto 'provider': uso client classico.")
                 self._hf_client = InferenceClient(token=hf_token)
 
-            self._hf_client.chat_completion(
-                model=HF_MODEL,
-                messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=5,
-            )
-            self._available = True
-            self._using_remote = True
-            print(f"[llama.cpp] Modalita' remota attiva e validata "
-                  f"(provider={HF_PROVIDER}, model={HF_MODEL})")
+            errors = []
+            seen = set()
+            for candidate in HF_MODEL_CANDIDATES:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                try:
+                    self._hf_client.chat_completion(
+                        model=candidate,
+                        messages=[{"role": "user", "content": "Hi"}],
+                        max_tokens=5,
+                    )
+                except Exception as e:
+                    errors.append(f"{candidate}: {type(e).__name__}: {e}")
+                    print(f"[llama.cpp] Modello '{candidate}' non utilizzabile "
+                          f"({type(e).__name__}), provo il successivo.")
+                    continue
+
+                self._remote_model = candidate
+                self._available = True
+                self._using_remote = True
+                self._last_error = None
+                print(f"[llama.cpp] Modalita' remota attiva e validata "
+                      f"(provider={HF_PROVIDER}, model={candidate})")
+                return
+
+            self._last_error = "remote: nessun modello disponibile -> " + " | ".join(errors)
+            self._available = False
+            print(f"[llama.cpp] ERRORE remoto: nessun candidato utilizzabile.")
         except Exception as e:
             self._last_error = f"remote: {type(e).__name__}: {e}"
             self._available = False
@@ -884,7 +916,7 @@ class LlamaCppWrapper:
             messages.append({"role": "user", "content": player_input})
 
             result = self._hf_client.chat_completion(
-                model=HF_MODEL,
+                model=self._remote_model,
                 messages=messages,
                 max_tokens=MAX_TOKENS,
                 temperature=TEMPERATURE,
@@ -968,7 +1000,7 @@ class LlamaCppWrapper:
     def _generate_riddle_remote(self, system: str, user_msg: str) -> "dict | None":
         try:
             result = self._hf_client.chat_completion(
-                model=HF_MODEL,
+                model=self._remote_model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},
