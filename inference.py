@@ -1,4 +1,4 @@
-import json, re, os, random, time
+import json, re, os, random
 
 try:
     from llama_cpp import Llama
@@ -17,23 +17,11 @@ TOP_K          = 40
 TOP_P          = 0.9
 REPEAT_PENALTY = 1.1
 
-# Modello servito via API invece che caricato in RAM: permette il deploy su
-# Render senza scaricare/eseguire il gguf.
-#
-# Il modello NON puo' essere lo stesso del file locale: Llama-3.2-1B-Instruct
-# e' servito dal solo provider featherless-ai, quindi fallisce con
-# "model_not_supported" su ogni account che non lo abbia abilitato.
-# HF_MODEL_CANDIDATES elenca modelli non gated e serviti da piu' provider:
-# al caricamento si prende il primo che risponde davvero.
-HF_MODEL    = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+# Stesso identico modello del file locale (Llama-3.2-1B-Instruct), servito
+# via API invece che caricato in RAM: permette il deploy su Render senza
+# scaricare/eseguire il gguf in locale.
+HF_MODEL    = os.environ.get("HF_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
 HF_PROVIDER = os.environ.get("HF_PROVIDER", "auto")
-
-HF_MODEL_CANDIDATES = [
-    HF_MODEL,
-    "Qwen/Qwen2.5-7B-Instruct",       # together, featherless
-    "Qwen/Qwen3-4B-Instruct-2507",    # nscale, featherless
-    "meta-llama/Llama-3.1-8B-Instruct",  # novita, nscale, featherless, deepinfra (gated)
-]
 
 ARMY_NAME = "Esercito della Sacra Croce"
 ARMY_NAME_EN = "Army of the Holy Cross"
@@ -767,6 +755,26 @@ def pulisci(testo, npc_name):
     return risultato if risultato else "..."
 
 
+def messages_to_prompt(messages):
+    """Applica il template del modello a una lista di messaggi in stile
+    OpenAI. Serve al passthrough /v1/chat/completions quando gira il modello
+    locale: la logica di gioco ora vive in GDScript, qui restano solo i
+    token del template."""
+    if MODEL_FORMAT == "llama3":
+        prompt = ""
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            prompt += f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>"
+        prompt += "<|start_header_id|>assistant<|end_header_id|>\n\n"
+        return prompt
+    prompt = ""
+    for m in messages:
+        prompt += f"<|im_start|>{m.get('role', 'user')}\n{m.get('content', '')}<|im_end|>\n"
+    prompt += "<|im_start|>assistant\n"
+    return prompt
+
+
 class LlamaCppWrapper:
     def __init__(self):
         self._model = None
@@ -776,27 +784,9 @@ class LlamaCppWrapper:
         self._last_error = None          
         self._remote_model = HF_MODEL
         self._remote_provider = HF_PROVIDER
-        self._last_load_attempt = 0.0
         self._try_load()
-
-    RELOAD_COOLDOWN = 60.0
-
-    def _ensure_available(self):
-        # Il caricamento avviene una sola volta all'avvio: se su Render la
-        # prima chiamata a HF fallisce (token, modello gated, crediti, rete)
-        # il server resterebbe in fallback fino al redeploy. Riprova a
-        # intervalli, cosi' il servizio si riprende da solo.
-        if self._available:
-            return True
-        now = time.monotonic()
-        if now - self._last_load_attempt < self.RELOAD_COOLDOWN:
-            return False
-        print("[llama.cpp] LLM non disponibile: nuovo tentativo di caricamento...")
-        self._try_load()
-        return self._available
 
     def _try_load(self):
-        self._last_load_attempt = time.monotonic()
         if Llama is None:
             print("[llama.cpp] Pacchetto llama_cpp non installato: salto il caricamento locale (modalita' API remota).")
         elif os.path.exists(MODEL_PATH):
@@ -829,35 +819,15 @@ class LlamaCppWrapper:
                 print("[llama.cpp] huggingface_hub senza supporto 'provider': uso client classico.")
                 self._hf_client = InferenceClient(token=hf_token)
 
-            errors = []
-            seen = set()
-            for candidate in HF_MODEL_CANDIDATES:
-                if candidate in seen:
-                    continue
-                seen.add(candidate)
-                try:
-                    self._hf_client.chat_completion(
-                        model=candidate,
-                        messages=[{"role": "user", "content": "Hi"}],
-                        max_tokens=5,
-                    )
-                except Exception as e:
-                    errors.append(f"{candidate}: {type(e).__name__}: {e}")
-                    print(f"[llama.cpp] Modello '{candidate}' non utilizzabile "
-                          f"({type(e).__name__}), provo il successivo.")
-                    continue
-
-                self._remote_model = candidate
-                self._available = True
-                self._using_remote = True
-                self._last_error = None
-                print(f"[llama.cpp] Modalita' remota attiva e validata "
-                      f"(provider={HF_PROVIDER}, model={candidate})")
-                return
-
-            self._last_error = "remote: nessun modello disponibile -> " + " | ".join(errors)
-            self._available = False
-            print(f"[llama.cpp] ERRORE remoto: nessun candidato utilizzabile.")
+            self._hf_client.chat_completion(
+                model=HF_MODEL,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=5,
+            )
+            self._available = True
+            self._using_remote = True
+            print(f"[llama.cpp] Modalita' remota attiva e validata "
+                  f"(provider={HF_PROVIDER}, model={HF_MODEL})")
         except Exception as e:
             self._last_error = f"remote: {type(e).__name__}: {e}"
             self._available = False
@@ -867,12 +837,8 @@ class LlamaCppWrapper:
     def available(self):
         return self._available
 
-    @property
-    def last_error(self):
-        return self._last_error
-
     def generate(self, player_input, npc_name, hostility, friendship, language, history, context_vars=None):
-        if not self._ensure_available():
+        if not self._available:
             return None
 
         if not self._using_remote:
@@ -916,7 +882,7 @@ class LlamaCppWrapper:
             messages.append({"role": "user", "content": player_input})
 
             result = self._hf_client.chat_completion(
-                model=self._remote_model,
+                model=HF_MODEL,
                 messages=messages,
                 max_tokens=MAX_TOKENS,
                 temperature=TEMPERATURE,
@@ -932,8 +898,40 @@ class LlamaCppWrapper:
             print(f"[llama.cpp] ERRORE generazione remota ({type(e).__name__}): {e}")
             return None
 
+    def raw_chat(self, messages, max_tokens=MAX_TOKENS, temperature=TEMPERATURE, top_p=TOP_P):
+        """Inferenza nuda, senza nessuna logica di gioco: prompt, memoria,
+        intent e pulizia sono passati a GDScript (ai/oraculus_*.gd). Questo
+        server resta utile solo come proxy, perche' tiene HF_TOKEN lato
+        server invece che dentro il .pck del gioco, da cui sarebbe
+        estraibile."""
+        if not self._available:
+            return None
+
+        if self._using_remote:
+            result = self._hf_client.chat_completion(
+                model=HF_MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+            )
+            return result.choices[0].message.content.strip()
+
+        stop = STOP_TOKENS_MAP.get(MODEL_FORMAT, STOP_TOKENS_MAP["chatml"])
+        out = self._model(
+            messages_to_prompt(messages),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_k=TOP_K,
+            top_p=top_p,
+            repeat_penalty=REPEAT_PENALTY,
+            stop=stop,
+            echo=False,
+        )
+        return out["choices"][0]["text"].strip()
+
     def generate_riddle(self, door_id: str, language: str = "inglese", theme: str = "", session_id: str = "") -> "dict | None":
-        if not self._ensure_available():
+        if not self._available:
             return None
 
         if not theme:
@@ -1000,7 +998,7 @@ class LlamaCppWrapper:
     def _generate_riddle_remote(self, system: str, user_msg: str) -> "dict | None":
         try:
             result = self._hf_client.chat_completion(
-                model=self._remote_model,
+                model=HF_MODEL,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},

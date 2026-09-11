@@ -3,7 +3,7 @@ import json
 import urllib.parse
 import traceback
 import os
-from inference import NPCDialogueEngine
+from inference import NPCDialogueEngine, HF_MODEL
 
 
 
@@ -75,7 +75,6 @@ class NPCHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"npcs": sorted(NPC_DATA.keys())})
         elif path == "/debug":
             import os
-            from inference import HF_MODEL_CANDIDATES, HF_PROVIDER
             hf_token = os.environ.get("HF_TOKEN", "")
             self.send_json(200, {
                 "hf_token_present": bool(hf_token),
@@ -84,17 +83,14 @@ class NPCHandler(BaseHTTPRequestHandler):
                 "using_remote": engine.llama._using_remote,
                 "model_loaded": engine.llama._model is not None,
                 "hf_client_loaded": engine.llama._hf_client is not None,
-                "hf_model_active": engine.llama._remote_model,
-                "hf_model_candidates": HF_MODEL_CANDIDATES,
-                "hf_provider": HF_PROVIDER,
-                "last_error": engine.llama.last_error,
             })
         elif path == "/":
             self.send_json(200, {
                 "service": "Oraculus AI NPC Dialogue",
                 "version": "5.0",
                 "endpoints": {
-                    "POST /chat":         "Genera risposta NPC",
+                    "POST /chat":         "Genera risposta NPC (logica lato server, legacy)",
+                    "POST /v1/chat/completions": "Inferenza nuda per il client GDScript",
                     "POST /reset":        "Resetta memoria NPC",
                     "POST /set_context":  "Aggiorna variabili contesto NPC",
                     "GET  /health":       "Stato server",
@@ -169,6 +165,41 @@ class NPCHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 traceback.print_exc()
                 self.send_json(500, {"error": f"Errore generazione riddle: {e}"})
+
+        elif path in ("/v1/chat/completions", "/chat/completions"):
+            # Passthrough compatibile OpenAI, senza logica di gioco: e' cio'
+            # che consuma il client GDScript (ai/oraculus_backend_remote.gd).
+            # Il token HF resta qui e non finisce nel .pck del gioco.
+            messages = body.get("messages", [])
+            if not messages:
+                self.send_json(400, {"error": "messages è obbligatorio"})
+                return
+            try:
+                content = engine.llama.raw_chat(
+                    messages,
+                    max_tokens=int(body.get("max_tokens", 80)),
+                    temperature=float(body.get("temperature", 0.6)),
+                    top_p=float(body.get("top_p", 0.9)),
+                )
+            except Exception as e:
+                traceback.print_exc()
+                self.send_json(500, {"error": f"Errore inferenza: {e}"})
+                return
+
+            if content is None:
+                self.send_json(503, {"error": "Backend di inferenza non disponibile"})
+                return
+
+            self.send_json(200, {
+                "id":      "oraculus-proxy",
+                "object":  "chat.completion",
+                "model":   body.get("model", HF_MODEL),
+                "choices": [{
+                    "index":         0,
+                    "message":       {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }],
+            })
 
         elif path == "/reset":
             npc_name = body.get("npc_name", None)
