@@ -1,4 +1,4 @@
-import json, re, os, random
+import json, re, os, random, time
 
 try:
     from llama_cpp import Llama
@@ -22,6 +22,22 @@ REPEAT_PENALTY = 1.1
 # scaricare/eseguire il gguf in locale.
 HF_MODEL    = os.environ.get("HF_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
 HF_PROVIDER = os.environ.get("HF_PROVIDER", "auto")
+
+# Llama-3.2-1B-Instruct e' un repo "gated": se il proprietario di HF_TOKEN non
+# ha ottenuto l'accesso, oppure il provider a cui "auto" instrada e' in avaria,
+# la validazione all'avvio fallisce e il server resta muto per tutta la vita
+# del processo. Teniamo quindi una catena di modelli: il primo che risponde
+# vince. Il default di riserva non e' gated ed e' servito da piu' provider.
+HF_MODEL_FALLBACKS = [
+    m.strip() for m in os.environ.get(
+        "HF_MODEL_FALLBACKS", "Qwen/Qwen2.5-7B-Instruct"
+    ).split(",") if m.strip()
+]
+HF_MODEL_CANDIDATES = [HF_MODEL] + [m for m in HF_MODEL_FALLBACKS if m != HF_MODEL]
+
+# Quando il caricamento remoto fallisce non e' detto che sia definitivo (rete,
+# rate limit, provider che rientra): riproviamo, ma non a ogni richiesta.
+HF_RETRY_COOLDOWN = float(os.environ.get("HF_RETRY_COOLDOWN", 60))
 
 ARMY_NAME = "Esercito della Sacra Croce"
 ARMY_NAME_EN = "Army of the Holy Cross"
@@ -784,9 +800,11 @@ class LlamaCppWrapper:
         self._last_error = None          
         self._remote_model = HF_MODEL
         self._remote_provider = HF_PROVIDER
+        self._last_attempt = 0.0
         self._try_load()
 
     def _try_load(self):
+        self._last_attempt = time.monotonic()
         if Llama is None:
             print("[llama.cpp] Pacchetto llama_cpp non installato: salto il caricamento locale (modalita' API remota).")
         elif os.path.exists(MODEL_PATH):
@@ -813,32 +831,66 @@ class LlamaCppWrapper:
             return
 
         try:
-            try:
-                self._hf_client = InferenceClient(provider=HF_PROVIDER, token=hf_token)
-            except TypeError:
-                print("[llama.cpp] huggingface_hub senza supporto 'provider': uso client classico.")
-                self._hf_client = InferenceClient(token=hf_token)
+            self._hf_client = InferenceClient(provider=HF_PROVIDER, token=hf_token)
+        except TypeError:
+            print("[llama.cpp] huggingface_hub senza supporto 'provider': uso client classico.")
+            self._hf_client = InferenceClient(token=hf_token)
 
-            self._hf_client.chat_completion(
-                model=HF_MODEL,
-                messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=5,
-            )
+        errori = []
+        for candidate in HF_MODEL_CANDIDATES:
+            try:
+                self._hf_client.chat_completion(
+                    model=candidate,
+                    messages=[{"role": "user", "content": "Hi"}],
+                    max_tokens=5,
+                )
+            except Exception as e:
+                errori.append(f"{candidate}: {type(e).__name__}: {e}")
+                print(f"[llama.cpp] modello '{candidate}' non utilizzabile "
+                      f"({type(e).__name__}): {e}")
+                continue
+
+            self._remote_model = candidate
             self._available = True
             self._using_remote = True
+            self._last_error = None
             print(f"[llama.cpp] Modalita' remota attiva e validata "
-                  f"(provider={HF_PROVIDER}, model={HF_MODEL})")
-        except Exception as e:
-            self._last_error = f"remote: {type(e).__name__}: {e}"
-            self._available = False
-            print(f"[llama.cpp] ERRORE remoto ({type(e).__name__}): {e}")
+                  f"(provider={HF_PROVIDER}, model={candidate})")
+            return
+
+        self._last_error = "remote: " + " | ".join(errori)
+        self._available = False
+        print(f"[llama.cpp] ERRORE remoto: nessun modello utilizzabile "
+              f"fra {HF_MODEL_CANDIDATES}")
+
+    def _ensure_available(self):
+        """Il caricamento remoto avviene una volta sola all'import. Se fallisce
+        per una causa transitoria (rete, rate limit, provider in avaria) senza
+        questo ritentativo il server resterebbe muto fino al prossimo deploy."""
+        if self._available:
+            return True
+        if time.monotonic() - self._last_attempt < HF_RETRY_COOLDOWN:
+            return False
+        print("[llama.cpp] Backend non disponibile: nuovo tentativo di caricamento.")
+        self._try_load()
+        return self._available
+
+    @property
+    def last_error(self):
+        return self._last_error
+
+    @property
+    def active_model(self):
+        if not self._available:
+            return None
+        return self._remote_model if self._using_remote else MODEL_PATH
 
     @property
     def available(self):
         return self._available
 
     def generate(self, player_input, npc_name, hostility, friendship, language, history, context_vars=None):
-        if not self._available:
+        if not self._ensure_available():
             return None
 
         if not self._using_remote:
@@ -882,7 +934,7 @@ class LlamaCppWrapper:
             messages.append({"role": "user", "content": player_input})
 
             result = self._hf_client.chat_completion(
-                model=HF_MODEL,
+                model=self._remote_model,
                 messages=messages,
                 max_tokens=MAX_TOKENS,
                 temperature=TEMPERATURE,
@@ -904,12 +956,12 @@ class LlamaCppWrapper:
         server resta utile solo come proxy, perche' tiene HF_TOKEN lato
         server invece che dentro il .pck del gioco, da cui sarebbe
         estraibile."""
-        if not self._available:
+        if not self._ensure_available():
             return None
 
         if self._using_remote:
             result = self._hf_client.chat_completion(
-                model=HF_MODEL,
+                model=self._remote_model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -931,7 +983,7 @@ class LlamaCppWrapper:
         return out["choices"][0]["text"].strip()
 
     def generate_riddle(self, door_id: str, language: str = "inglese", theme: str = "", session_id: str = "") -> "dict | None":
-        if not self._available:
+        if not self._ensure_available():
             return None
 
         if not theme:
@@ -998,7 +1050,7 @@ class LlamaCppWrapper:
     def _generate_riddle_remote(self, system: str, user_msg: str) -> "dict | None":
         try:
             result = self._hf_client.chat_completion(
-                model=HF_MODEL,
+                model=self._remote_model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},

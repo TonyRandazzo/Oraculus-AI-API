@@ -3,7 +3,7 @@ import json
 import urllib.parse
 import traceback
 import os
-from inference import NPCDialogueEngine, HF_MODEL
+from inference import NPCDialogueEngine, HF_PROVIDER, HF_MODEL_CANDIDATES
 
 
 
@@ -64,10 +64,15 @@ class NPCHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
 
         if path == "/health":
+            # "status" resta "ok" finche' il processo HTTP risponde: e' cio'
+            # che guarda l'healthcheck di Render. Lo stato dell'inferenza sta
+            # in "llama"/"last_error", che il client GDScript logga.
             self.send_json(200, {
-                "status": "ok",
-                "engine": "llama.cpp+fallback",
-                "llama":  engine.llama.available,
+                "status":     "ok",
+                "engine":     "llama.cpp+fallback",
+                "llama":      engine.llama.available,
+                "model":      engine.llama.active_model,
+                "last_error": engine.llama.last_error,
             })
 
         elif path == "/npcs":
@@ -78,11 +83,17 @@ class NPCHandler(BaseHTTPRequestHandler):
             hf_token = os.environ.get("HF_TOKEN", "")
             self.send_json(200, {
                 "hf_token_present": bool(hf_token),
-                "hf_token_prefix": hf_token[:8] + "..." if hf_token else "MISSING",
                 "llama_available": engine.llama.available,
                 "using_remote": engine.llama._using_remote,
                 "model_loaded": engine.llama._model is not None,
                 "hf_client_loaded": engine.llama._hf_client is not None,
+                "model_candidates": HF_MODEL_CANDIDATES,
+                "active_model": engine.llama.active_model,
+                "provider": HF_PROVIDER,
+                # La causa vera del 503 su /v1/chat/completions: senza questa
+                # riga il fallimento di caricamento era visibile solo nei log
+                # di Render.
+                "last_error": engine.llama.last_error,
             })
         elif path == "/":
             self.send_json(200, {
@@ -187,13 +198,16 @@ class NPCHandler(BaseHTTPRequestHandler):
                 return
 
             if content is None:
-                self.send_json(503, {"error": "Backend di inferenza non disponibile"})
+                self.send_json(503, {
+                    "error": "Backend di inferenza non disponibile",
+                    "detail": engine.llama.last_error,
+                })
                 return
 
             self.send_json(200, {
                 "id":      "oraculus-proxy",
                 "object":  "chat.completion",
-                "model":   body.get("model", HF_MODEL),
+                "model":   engine.llama.active_model,
                 "choices": [{
                     "index":         0,
                     "message":       {"role": "assistant", "content": content},
